@@ -27,6 +27,7 @@ class PulseBleService : Service() {
     private val SERVER_URL = "https://y.shit.vc:68/api/hr"
     private val SECRET_TOKEN = "MY_SUPER_SECRET_PULSE_KEY"
 
+    private val SERVICE_FEE0 = UUID.fromString("0000fee0-0000-1000-8000-00805f9b34fb")
     private val SERVICE_FEE1 = UUID.fromString("0000fee1-0000-1000-8000-00805f9b34fb")
     private val CHAR_AUTH = UUID.fromString("00000009-0000-1000-8000-00805f9b34fb")
     private val SERVICE_HR = UUID.fromString("0000180d-0000-1000-8000-00805f9b34fb")
@@ -54,7 +55,7 @@ class PulseBleService : Service() {
 
     private fun startBleScan() {
         val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
-        val scanner = adapter.bluetoothLeScanner
+        val scanner = adapter?.bluetoothLeScanner ?: return
         Log.d(TAG, "Starting BLE Scan...")
 
         val callback = object : ScanCallback() {
@@ -74,6 +75,28 @@ class PulseBleService : Service() {
         bluetoothGatt = device.connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
     }
 
+    private fun writeCharacteristicCompat(gatt: BluetoothGatt, char: BluetoothGattCharacteristic, value: ByteArray) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeCharacteristic(char, value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+        } else {
+            @Suppress("DEPRECATION")
+            char.value = value
+            @Suppress("DEPRECATION")
+            gatt.writeCharacteristic(char)
+        }
+    }
+
+    private fun writeDescriptorCompat(gatt: BluetoothGatt, desc: BluetoothGattDescriptor, value: ByteArray) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeDescriptor(desc, value)
+        } else {
+            @Suppress("DEPRECATION")
+            desc.value = value
+            @Suppress("DEPRECATION")
+            gatt.writeDescriptor(desc)
+        }
+    }
+
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
@@ -90,44 +113,47 @@ class PulseBleService : Service() {
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             Log.d(TAG, "Services discovered. Starting Auth...")
-            val authService = gatt.getService(SERVICE_FEE1)
+            val authService = gatt.getService(SERVICE_FEE1) ?: gatt.getService(SERVICE_FEE0)
             val authChar = authService?.getCharacteristic(CHAR_AUTH)
             if (authChar != null) {
                 gatt.setCharacteristicNotification(authChar, true)
                 val descriptor = authChar.getDescriptor(CLIENT_CONFIG)
                 descriptor?.let {
-                    it.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                    gatt.writeDescriptor(it)
+                    writeDescriptorCompat(gatt, it, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
                 }
             }
         }
 
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             if (descriptor.characteristic.uuid == CHAR_AUTH) {
-                // Запрос Challenge Nonce
                 val authChar = descriptor.characteristic
-                authChar.value = byteArrayOf(0x01, 0x08)
-                gatt.writeCharacteristic(authChar)
+                writeCharacteristicCompat(gatt, authChar, byteArrayOf(0x01, 0x08))
             } else if (descriptor.characteristic.uuid == CHAR_HR_MEASURE) {
-                // Включаем постоянный стриминг пульса
                 val hrService = gatt.getService(SERVICE_HR)
                 val ctrlChar = hrService?.getCharacteristic(CHAR_HR_CONTROL)
                 ctrlChar?.let {
-                    it.value = byteArrayOf(0x15, 0x01, 0x01)
-                    gatt.writeCharacteristic(it)
+                    writeCharacteristicCompat(gatt, it, byteArrayOf(0x15, 0x01, 0x01))
                 }
             }
         }
 
-        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGatt) {
-            val data = characteristic.value ?: return
+        @Suppress("DEPRECATION")
+        @Deprecated("Deprecated in Java")
+        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+            handleCharacteristicChanged(gatt, characteristic, characteristic.value ?: ByteArray(0))
+        }
+
+        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
+            handleCharacteristicChanged(gatt, characteristic, value)
+        }
+
+        private fun handleCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, data: ByteArray) {
             if (characteristic.uuid == CHAR_AUTH) {
                 if (data.size >= 19 && data[0] == 0x10.toByte() && data[1] == 0x01.toByte() && data[2] == 0x01.toByte()) {
                     val nonce = data.copyOfRange(3, 19)
                     val encrypted = encryptAes(nonce, hexStringToByteArray(AUTH_KEY_HEX))
                     val response = byteArrayOf(0x03, 0x08) + encrypted
-                    characteristic.value = response
-                    gatt.writeCharacteristic(characteristic)
+                    writeCharacteristicCompat(gatt, characteristic, response)
                 } else if (data.size >= 3 && data[0] == 0x10.toByte() && data[1] == 0x03.toByte() && data[2] == 0x01.toByte()) {
                     Log.d(TAG, "AUTH SUCCESS! Subscribing to Heart Rate...")
                     val hrService = gatt.getService(SERVICE_HR)
@@ -136,16 +162,23 @@ class PulseBleService : Service() {
                         gatt.setCharacteristicNotification(it, true)
                         val desc = it.getDescriptor(CLIENT_CONFIG)
                         desc?.let { d ->
-                            d.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                            gatt.writeDescriptor(d)
+                            writeDescriptorCompat(gatt, d, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
                         }
                     }
                 }
             } else if (characteristic.uuid == CHAR_HR_MEASURE) {
-                val bpm = if (data[0].toInt() and 0x01 == 0) data[1].toInt() and 0xFF else (data[1].toInt() and 0xFF) or ((data[2].toInt() and 0xFF) shl 8)
-                Log.d(TAG, "Heart Rate: $bpm BPM")
-                updateNotification(bpm)
-                sendPulseToServer(bpm)
+                if (data.isNotEmpty()) {
+                    val bpm = if (data[0].toInt() and 0x01 == 0) {
+                        if (data.size > 1) data[1].toInt() and 0xFF else 0
+                    } else {
+                        if (data.size > 2) (data[1].toInt() and 0xFF) or ((data[2].toInt() and 0xFF) shl 8) else 0
+                    }
+                    if (bpm > 0) {
+                        Log.d(TAG, "Heart Rate: $bpm BPM")
+                        updateNotification(bpm)
+                        sendPulseToServer(bpm)
+                    }
+                }
             }
         }
     }
