@@ -23,6 +23,7 @@ import javax.crypto.spec.SecretKeySpec
 class PulseBleService : Service() {
 
     private val TAG = "PulseBridge"
+    private val TARGET_MAC = "24:B2:31:75:87:50"
     private val AUTH_KEY_HEX = "a3a94bfc609bc30b6c41a5b8b61688ef"
     private val SERVER_URL = "https://y.shit.vc:68/api/hr"
     private val SECRET_TOKEN = "MY_SUPER_SECRET_PULSE_KEY"
@@ -44,35 +45,65 @@ class PulseBleService : Service() {
         createNotificationChannel()
         val notification = NotificationCompat.Builder(this, "pulse_channel")
             .setContentTitle("PulseBridge")
-            .setContentText("Поиск и подключение к Mi Band...")
+            .setContentText("Подключение к $TARGET_MAC...")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .build()
         startForeground(1, notification)
 
-        startBleScan()
+        sendLog("Запуск сервиса. Цель: $TARGET_MAC")
+        sendState("Подключение к $TARGET_MAC...")
+
+        connectDirectOrScan()
         return START_STICKY
     }
 
-    private fun startBleScan() {
-        val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
-        val scanner = adapter?.bluetoothLeScanner ?: return
-        Log.d(TAG, "Starting BLE Scan...")
-
-        val callback = object : ScanCallback() {
-            override fun onScanResult(callbackType: Int, result: ScanResult) {
-                val name = result.device.name ?: ""
-                if (name.contains("Band", ignoreCase = true) || name.contains("Xiaomi", ignoreCase = true)) {
-                    Log.d(TAG, "Found device: $name [${result.device.address}]")
-                    scanner.stopScan(this)
-                    connectToDevice(result.device)
-                }
-            }
-        }
-        scanner.startScan(callback)
+    override fun onDestroy() {
+        super.onDestroy()
+        bluetoothGatt?.close()
+        bluetoothGatt = null
+        sendLog("Сервис остановлен")
     }
 
-    private fun connectToDevice(device: BluetoothDevice) {
+    private fun sendLog(msg: String) {
+        Log.d(TAG, msg)
+        sendBroadcast(Intent("com.pulsebridge.LOG").apply { putExtra("msg", msg) })
+    }
+
+    private fun sendState(status: String) {
+        sendBroadcast(Intent("com.pulsebridge.STATUS").apply { putExtra("status", status) })
+    }
+
+    private fun sendBpmUpdate(bpm: Int) {
+        sendBroadcast(Intent("com.pulsebridge.BPM").apply { putExtra("bpm", bpm) })
+    }
+
+    private fun connectDirectOrScan() {
+        val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+        if (adapter == null || !adapter.isEnabled) {
+            sendLog("ОШИБКА: Bluetooth выключен на телефоне!")
+            sendState("Bluetooth выключен!")
+            return
+        }
+
+        sendLog("Прямое подключение к $TARGET_MAC...")
+        val device = adapter.getRemoteDevice(TARGET_MAC)
         bluetoothGatt = device.connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+
+        // Параллельно запускаем точечный скан по MAC для быстрого пробуждения
+        val scanner = adapter.bluetoothLeScanner
+        if (scanner != null) {
+            val filter = ScanFilter.Builder().setDeviceAddress(TARGET_MAC).build()
+            val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+            scanner.startScan(listOf(filter), settings, object : ScanCallback() {
+                override fun onScanResult(callbackType: Int, result: ScanResult) {
+                    sendLog("Скан обнаружил браслет в эфире (RSSI: ${result.rssi})")
+                    scanner.stopScan(this)
+                    if (bluetoothGatt == null) {
+                        bluetoothGatt = result.device.connectGatt(this@PulseBleService, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+                    }
+                }
+            })
+        }
     }
 
     private fun writeCharacteristicCompat(gatt: BluetoothGatt, char: BluetoothGattCharacteristic, value: ByteArray) {
@@ -100,35 +131,50 @@ class PulseBleService : Service() {
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                Log.d(TAG, "Connected to GATT, discovering services...")
+                sendLog("УСПЕХ: GATT подключен! Опрос доступных служб...")
+                sendState("GATT подключен. Опрос служб...")
                 gatt.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                Log.d(TAG, "Disconnected. Reconnecting in 3 sec...")
+                sendLog("GATT отключился (status: $status). Повтор через 3 сек...")
+                sendState("Отключено. Реконнект...")
                 scope.launch {
                     delay(3000)
-                    startBleScan()
+                    connectDirectOrScan()
                 }
             }
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            Log.d(TAG, "Services discovered. Starting Auth...")
+            sendLog("Службы обнаружены (всего ${gatt.services.size}):")
+            for (s in gatt.services) {
+                val shortUuid = s.uuid.toString().substring(4, 8)
+                sendLog(" -> Служба: 0x$shortUuid")
+            }
+
             val authService = gatt.getService(SERVICE_FEE1) ?: gatt.getService(SERVICE_FEE0)
             val authChar = authService?.getCharacteristic(CHAR_AUTH)
+
             if (authChar != null) {
+                sendLog("Служба авторизации найдена. Подписка на Auth...")
+                sendState("Авторизация ключом...")
                 gatt.setCharacteristicNotification(authChar, true)
                 val descriptor = authChar.getDescriptor(CLIENT_CONFIG)
                 descriptor?.let {
                     writeDescriptorCompat(gatt, it, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
                 }
+            } else {
+                sendLog("Служба Auth 0x0009 не найдена. Пробуем Heart Rate напрямую...")
+                subscribeHeartRate(gatt)
             }
         }
 
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             if (descriptor.characteristic.uuid == CHAR_AUTH) {
+                sendLog("Отправка запроса на Auth Challenge (0x01, 0x08)...")
                 val authChar = descriptor.characteristic
                 writeCharacteristicCompat(gatt, authChar, byteArrayOf(0x01, 0x08))
             } else if (descriptor.characteristic.uuid == CHAR_HR_MEASURE) {
+                sendLog("Подписка на пульс активна! Отправка команды старта замера...")
                 val hrService = gatt.getService(SERVICE_HR)
                 val ctrlChar = hrService?.getCharacteristic(CHAR_HR_CONTROL)
                 ctrlChar?.let {
@@ -150,21 +196,17 @@ class PulseBleService : Service() {
         private fun handleCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, data: ByteArray) {
             if (characteristic.uuid == CHAR_AUTH) {
                 if (data.size >= 19 && data[0] == 0x10.toByte() && data[1] == 0x01.toByte() && data[2] == 0x01.toByte()) {
+                    sendLog("Получен Auth Challenge от браслета. Шифрование AES...")
                     val nonce = data.copyOfRange(3, 19)
                     val encrypted = encryptAes(nonce, hexStringToByteArray(AUTH_KEY_HEX))
                     val response = byteArrayOf(0x03, 0x08) + encrypted
                     writeCharacteristicCompat(gatt, characteristic, response)
                 } else if (data.size >= 3 && data[0] == 0x10.toByte() && data[1] == 0x03.toByte() && data[2] == 0x01.toByte()) {
-                    Log.d(TAG, "AUTH SUCCESS! Subscribing to Heart Rate...")
-                    val hrService = gatt.getService(SERVICE_HR)
-                    val hrChar = hrService?.getCharacteristic(CHAR_HR_MEASURE)
-                    hrChar?.let {
-                        gatt.setCharacteristicNotification(it, true)
-                        val desc = it.getDescriptor(CLIENT_CONFIG)
-                        desc?.let { d ->
-                            writeDescriptorCompat(gatt, d, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-                        }
-                    }
+                    sendLog("УСПЕХ АВТОРИЗАЦИИ! Ключ подошел!")
+                    sendState("Авторизовано! Подключение пульса...")
+                    subscribeHeartRate(gatt)
+                } else {
+                    sendLog("Ответ Auth: ${data.joinToString(" ") { String.format("%02X", it) }}")
                 }
             } else if (characteristic.uuid == CHAR_HR_MEASURE) {
                 if (data.isNotEmpty()) {
@@ -174,11 +216,28 @@ class PulseBleService : Service() {
                         if (data.size > 2) (data[1].toInt() and 0xFF) or ((data[2].toInt() and 0xFF) shl 8) else 0
                     }
                     if (bpm > 0) {
-                        Log.d(TAG, "Heart Rate: $bpm BPM")
+                        sendLog("❤️ ПУЛЬС: $bpm BPM")
+                        sendState("Трансляция пульса активна ($bpm BPM)")
+                        sendBpmUpdate(bpm)
                         updateNotification(bpm)
                         sendPulseToServer(bpm)
                     }
                 }
+            }
+        }
+
+        private fun subscribeHeartRate(gatt: BluetoothGatt) {
+            val hrService = gatt.getService(SERVICE_HR)
+            val hrChar = hrService?.getCharacteristic(CHAR_HR_MEASURE)
+            if (hrChar != null) {
+                sendLog("Подписка на службу Heart Rate 0x180D...")
+                gatt.setCharacteristicNotification(hrChar, true)
+                val desc = hrChar.getDescriptor(CLIENT_CONFIG)
+                desc?.let { d ->
+                    writeDescriptorCompat(gatt, d, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+                }
+            } else {
+                sendLog("Служба 0x180D не найдена. Проверяем сервисы...")
             }
         }
     }
@@ -209,8 +268,8 @@ class PulseBleService : Service() {
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json")
                 conn.doOutput = true
-                conn.connectTimeout = 2000
-                conn.readTimeout = 2000
+                conn.connectTimeout = 1500
+                conn.readTimeout = 1500
 
                 val payload = JSONObject().apply {
                     put("bpm", bpm)
@@ -218,10 +277,15 @@ class PulseBleService : Service() {
                 }
 
                 OutputStreamWriter(conn.outputStream).use { it.write(payload.toString()) }
-                conn.responseCode
+                val code = conn.responseCode
+                if (code == 200) {
+                    // Отправлено успешно
+                } else {
+                    sendLog("VPS ответил кодом: $code")
+                }
                 conn.disconnect()
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to send: ${e.message}")
+                sendLog("Ошибка отправки на VPS: ${e.message}")
             }
         }
     }
@@ -234,13 +298,13 @@ class PulseBleService : Service() {
             .setOngoing(true)
             .build()
         val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(1, notification)
+        manager?.notify(1, notification)
     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel("pulse_channel", "Pulse Bridge", NotificationManager.IMPORTANCE_LOW)
-            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+            getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
         }
     }
 }
