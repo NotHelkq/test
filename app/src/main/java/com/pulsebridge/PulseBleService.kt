@@ -3,7 +3,6 @@ package com.pulsebridge
 import android.annotation.SuppressLint
 import android.app.*
 import android.bluetooth.*
-import android.bluetooth.le.*
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -32,6 +31,10 @@ class PulseBleService : Service() {
     private var bluetoothGatt: BluetoothGatt? = null
     private val scope = CoroutineScope(Dispatchers.IO + Job())
 
+    private val notifyCharsQueue = LinkedList<BluetoothGattCharacteristic>()
+    private var authChar005e: BluetoothGattCharacteristic? = null
+    private var aa02WriteChar: BluetoothGattCharacteristic? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -46,7 +49,7 @@ class PulseBleService : Service() {
         sendLog("Запуск сервиса. Цель: $TARGET_MAC")
         sendState("Подключение к $TARGET_MAC...")
 
-        connectDirectOrScan()
+        connectDirect()
         return START_STICKY
     }
 
@@ -70,7 +73,7 @@ class PulseBleService : Service() {
         sendBroadcast(Intent("com.pulsebridge.BPM").apply { putExtra("bpm", bpm) })
     }
 
-    private fun connectDirectOrScan() {
+    private fun connectDirect() {
         val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
         if (adapter == null || !adapter.isEnabled) {
             sendLog("ОШИБКА: Bluetooth выключен!")
@@ -78,12 +81,15 @@ class PulseBleService : Service() {
             return
         }
 
-        sendLog("Прямое подключение к $TARGET_MAC...")
+        sendLog("Прямой коннект к $TARGET_MAC...")
         val device = adapter.getRemoteDevice(TARGET_MAC)
         bluetoothGatt = device.connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
     }
 
     private fun writeCharacteristicCompat(gatt: BluetoothGatt, char: BluetoothGattCharacteristic, value: ByteArray) {
+        val hex = value.joinToString(" ") { String.format("%02X", it) }
+        val shortUuid = char.uuid.toString().substring(4, 8)
+        sendLog(">> [0x$shortUuid] Запись: $hex")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             gatt.writeCharacteristic(char, value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
         } else {
@@ -105,120 +111,112 @@ class PulseBleService : Service() {
         }
     }
 
+    private fun subscribeNextNotification(gatt: BluetoothGatt) {
+        if (notifyCharsQueue.isEmpty()) {
+            sendLog("Все уведомления активированы! Старт Auth на 0x005e...")
+            authChar005e?.let {
+                // Шлем запрос Nonce на 0x005e
+                writeCharacteristicCompat(gatt, it, byteArrayOf(0x01, 0x08))
+            }
+            return
+        }
+        val ch = notifyCharsQueue.poll() ?: return
+        val shortUuid = ch.uuid.toString().substring(4, 8)
+        sendLog("Подписка на уведомления [0x$shortUuid]...")
+        gatt.setCharacteristicNotification(ch, true)
+        val desc = ch.getDescriptor(CLIENT_CONFIG)
+        if (desc != null) {
+            writeDescriptorCompat(gatt, desc, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+        } else {
+            subscribeNextNotification(gatt)
+        }
+    }
+
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                sendLog("УСПЕХ: GATT подключен! Опрос доступных служб...")
+                sendLog("GATT подключен! Опрос служб...")
                 sendState("GATT подключен. Опрос служб...")
                 gatt.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                sendLog("GATT отключился (код $status). Реконнект через 3 сек...")
+                sendLog("GATT отключен (код $status). Реконнект...")
                 sendState("Отключено. Реконнект...")
                 scope.launch {
                     delay(3000)
-                    connectDirectOrScan()
+                    connectDirect()
                 }
             }
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            sendLog("--- АНАЛИЗ СЛУЖБ И ПОРТОВ XIAOMI ---")
-            
-            var targetAuthChar: BluetoothGattCharacteristic? = null
-            var targetDataChar: BluetoothGattCharacteristic? = null
+            notifyCharsQueue.clear()
 
             for (s in gatt.services) {
-                val sUuidStr = s.uuid.toString()
-                val sShort = if (sUuidStr.startsWith("0000")) sUuidStr.substring(4, 8) else sUuidStr.substring(0, 8)
-                
-                // Пропускаем стандартные системные, смотрим только Xiaomi сервисы
-                if (sShort in listOf("1800", "1801", "180a", "180f", "1812")) continue
-
-                sendLog("Служба [0x$sShort]:")
+                val sShort = s.uuid.toString().substring(4, 8)
                 for (c in s.characteristics) {
-                    val cUuidStr = c.uuid.toString()
-                    val cShort = if (cUuidStr.startsWith("0000")) cUuidStr.substring(4, 8) else cUuidStr.substring(0, 8)
-                    
-                    val props = mutableListOf<String>()
-                    if (c.properties and BluetoothGattCharacteristic.PROPERTY_READ != 0) props.add("R")
-                    if (c.properties and BluetoothGattCharacteristic.PROPERTY_WRITE != 0 || c.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0) props.add("W")
-                    if (c.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0) props.add("N")
-                    if (c.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0) props.add("I")
-                    
-                    sendLog("  -> Х-ка 0x$cShort [${props.joinToString(",")}]")
-
-                    // Ищем Auth порт в fe95 или fdab (обычно 0010, 0001 или с правами Write+Notify)
-                    if (sShort.equals("fe95", true) || sShort.equals("fdab", true)) {
-                        if (c.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0) {
-                            targetAuthChar = c
-                        }
-                    }
-
-                    // Ищем порт потока данных пульса
-                    if (c.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0 && c != targetAuthChar) {
-                        targetDataChar = c
+                    val cShort = c.uuid.toString().substring(4, 8)
+                    if (sShort.equals("fe95", true) && cShort.equals("005e", true)) {
+                        authChar005e = c
+                        notifyCharsQueue.add(c)
+                    } else if (sShort.equals("aa01", true) && cShort.equals("0003", true)) {
+                        notifyCharsQueue.add(c)
+                    } else if (sShort.equals("aa01", true) && cShort.equals("0002", true)) {
+                        aa02WriteChar = c
+                    } else if (sShort.equals("fdab", true) && (cShort.equals("0002", true) || cShort.equals("0003", true))) {
+                        notifyCharsQueue.add(c)
                     }
                 }
             }
 
-            // Подписываемся на уведомления найденных портов
-            if (targetAuthChar != null) {
-                sendLog("Подписка на порт Xiaomi Auth: 0x${targetAuthChar.uuid.toString().substring(4, 8)}")
-                gatt.setCharacteristicNotification(targetAuthChar, true)
-                val desc = targetAuthChar.getDescriptor(CLIENT_CONFIG)
-                desc?.let {
-                    writeDescriptorCompat(gatt, it, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-                }
-            } else if (targetDataChar != null) {
-                sendLog("Подписка на поток данных: 0x${targetDataChar.uuid.toString().substring(4, 8)}")
-                gatt.setCharacteristicNotification(targetDataChar, true)
-                val desc = targetDataChar.getDescriptor(CLIENT_CONFIG)
-                desc?.let {
-                    writeDescriptorCompat(gatt, it, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-                }
-            }
+            sendLog("Найдено целевых каналов для подписки: ${notifyCharsQueue.size}")
+            subscribeNextNotification(gatt)
         }
 
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-            sendLog("Дескриптор записан! Запрос Auth Challenge (0x01, 0x08)...")
-            val ch = descriptor.characteristic
-            writeCharacteristicCompat(gatt, ch, byteArrayOf(0x01, 0x08))
+            val cShort = descriptor.characteristic.uuid.toString().substring(4, 8)
+            sendLog("Подписан на [0x$cShort] OK")
+            // Переходим к следующей подписке в очереди
+            subscribeNextNotification(gatt)
         }
 
         @Suppress("DEPRECATION")
         @Deprecated("Deprecated in Java")
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            handleData(characteristic, characteristic.value ?: ByteArray(0))
+            handleData(gatt, characteristic, characteristic.value ?: ByteArray(0))
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
-            handleData(characteristic, value)
+            handleData(gatt, characteristic, value)
         }
 
-        private fun handleData(characteristic: BluetoothGattCharacteristic, data: ByteArray) {
+        private fun handleData(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, data: ByteArray) {
             val cUuid = characteristic.uuid.toString().substring(4, 8)
             val hexData = data.joinToString(" ") { String.format("%02X", it) }
             sendLog("<< [0x$cUuid]: $hexData")
 
-            // Проверяем Challenge от Xiaomi
-            if (data.size >= 19 && data[0] == 0x10.toByte() && data[1] == 0x01.toByte() && data[2] == 0x01.toByte()) {
+            // Проверяем Challenge
+            if (data.size >= 19 && data[0] == 0x10.toByte() && (data[1] == 0x01.toByte() || data[1] == 0x02.toByte()) && data[2] == 0x01.toByte()) {
                 sendLog("Получен Nonce! Шифрование AES...")
                 val nonce = data.copyOfRange(3, 19)
                 val encrypted = encryptAes(nonce, hexStringToByteArray(AUTH_KEY_HEX))
                 val response = byteArrayOf(0x03, 0x08) + encrypted
-                bluetoothGatt?.let { writeCharacteristicCompat(it, characteristic, response) }
+                writeCharacteristicCompat(gatt, characteristic, response)
             } else if (data.size >= 3 && data[0] == 0x10.toByte() && data[1] == 0x03.toByte() && data[2] == 0x01.toByte()) {
                 sendLog("УСПЕХ АВТОРИЗАЦИИ! Ключ принят!")
-                sendState("Авторизовано! Замер пульса...")
+                sendState("Авторизовано! Запрос пульса...")
+
+                // Запускаем постоянный замер пульса через 0xaa02 или 0x005e
+                aa02WriteChar?.let {
+                    writeCharacteristicCompat(gatt, it, byteArrayOf(0x15, 0x01, 0x01))
+                }
             }
 
-            // Поиск байта пульса (обычно число 40-200)
+            // Ищем байт пульса (от 45 до 195)
             for (i in data.indices) {
                 val b = data[i].toInt() and 0xFF
                 if (b in 45..195 && data.size <= 8) {
-                    // Вероятный пульс
                     sendLog("❤️ ОБНАРУЖЕН ПУЛЬС: $b BPM")
-                    sendState("Трансляция пульса ($b BPM)")
+                    sendState("Трансляция ($b BPM)")
                     sendBpmUpdate(b)
                     updateNotification(b)
                     sendPulseToServer(b)
@@ -266,7 +264,6 @@ class PulseBleService : Service() {
                 conn.responseCode
                 conn.disconnect()
             } catch (e: Exception) {
-                // Игнорируем мелкие таймауты сети
             }
         }
     }

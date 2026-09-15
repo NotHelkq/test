@@ -18,6 +18,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvLogs: TextView
     private lateinit var scrollView: ScrollView
     private lateinit var btnToggle: Button
+    private lateinit var btnCopy: Button
 
     private var isRunning = false
 
@@ -45,7 +46,6 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Верстка интерфейса программно
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(32, 32, 32, 32)
@@ -55,16 +55,16 @@ class MainActivity : AppCompatActivity() {
         tvStatus = TextView(this).apply {
             text = "Статус: Остановлено"
             setTextColor(0xFFFFA502.toInt())
-            textSize = 16f
+            textSize = 15f
         }
 
         tvBpm = TextView(this).apply {
             text = "-- BPM"
             setTextColor(0xFFFF4757.toInt())
-            textSize = 44f
+            textSize = 42f
             setTypeface(null, android.graphics.Typeface.BOLD)
             gravity = android.view.Gravity.CENTER
-            setPadding(0, 20, 0, 20)
+            setPadding(0, 16, 0, 16)
         }
 
         btnToggle = Button(this).apply {
@@ -81,11 +81,35 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val logHeader = TextView(this).apply {
-            text = "\nЖурнал событий (Логи):"
-            setTextColor(0xFF888888.toInt())
-            textSize = 13f
+        val btnRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 16, 0, 8)
         }
+
+        btnCopy = Button(this).apply {
+            text = "📋 СКОПИРОВАТЬ ЛОГ"
+            setBackgroundColor(0xFF3742FA.toInt())
+            setTextColor(0xFFFFFFFF.toInt())
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val clip = ClipData.newPlainText("PulseLogs", tvLogs.text.toString())
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(this@MainActivity, "Логи скопированы в буфер!", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        val btnClear = Button(this).apply {
+            text = "ОЧИСТИТЬ"
+            setBackgroundColor(0xFF57606F.toInt())
+            setTextColor(0xFFFFFFFF.toInt())
+            setOnClickListener {
+                tvLogs.text = ""
+            }
+        }
+
+        btnRow.addView(btnCopy)
+        btnRow.addView(btnClear)
 
         scrollView = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -105,7 +129,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(tvStatus)
         root.addView(tvBpm)
         root.addView(btnToggle)
-        root.addView(logHeader)
+        root.addView(btnRow)
         root.addView(scrollView)
 
         setContentView(root)
