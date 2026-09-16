@@ -247,10 +247,29 @@ class MainActivity : AppCompatActivity() {
             )
             layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply { rightMargin = dp(8) }
             setOnClickListener {
+                val logsText = tvLogs.text.toString()
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                val clip = ClipData.newPlainText("PulseBridgeLogs", tvLogs.text.toString())
+                val clip = ClipData.newPlainText("PulseBridgeLogs", logsText)
                 clipboard.setPrimaryClip(clip)
-                Toast.makeText(this@MainActivity, "✅ Логи скопированы в буфер обмена!", Toast.LENGTH_SHORT).show()
+
+                // Фоновая отправка на сервер
+                Thread {
+                    try {
+                        val url = java.net.URL("https://y.shit.vc:68/api/log")
+                        val conn = url.openConnection() as java.net.HttpURLConnection
+                        conn.requestMethod = "POST"
+                        conn.doOutput = true
+                        conn.connectTimeout = 4000
+                        conn.readTimeout = 4000
+                        conn.outputStream.use { os ->
+                            os.write(logsText.toByteArray(Charsets.UTF_8))
+                        }
+                        conn.responseCode
+                        conn.disconnect()
+                    } catch (_: Exception) {}
+                }.start()
+
+                Toast.makeText(this@MainActivity, "✅ Логи скопированы и загружены на сервер!", Toast.LENGTH_SHORT).show()
             }
         }
 

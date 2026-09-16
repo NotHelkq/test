@@ -631,11 +631,40 @@ class PulseBleService : Service() {
             return
         }
 
-        // 3. Разбор RealTimeStats (в любом сообщении с type=8, содержащем health[39])
+        // 3. Подтверждение пакетов метрик датчиков (CMD_RAW_SENSOR_ACK = 49 для subtype 50 / 53)
+        if (type == 8 && (subtype == 50 || subtype == 53)) {
+            lastPulsePacketTime = System.currentTimeMillis()
+            rawSensorBatchesSinceAck++
+            if (rawSensorBatchesSinceAck >= 5) {
+                rawSensorBatchesSinceAck = 0
+                rawSensorAckCounter++
+                sendRawSensorAck(gatt, rawSensorAckCounter)
+            }
+        }
+
+        // 4. Разбор данных пульса и шагов (SportData field 42 и RealTimeStats field 39)
         if (type == 8) {
             val healthBytes = cmd[10]?.asBytes()
             if (healthBytes != null) {
                 val healthFields = ProtoReader.parseFields(healthBytes)
+
+                // SportData V2A (field 42) — основной посекундный поток Band 9 Active!
+                val sportBytes = healthFields[42]?.asBytes()
+                if (sportBytes != null) {
+                    lastPulsePacketTime = System.currentTimeMillis()
+                    val sportFields = ProtoReader.parseFields(sportBytes)
+                    val hr = sportFields[1]?.asLong()?.toInt() ?: 0
+                    val steps = sportFields[2]?.asLong()?.toInt() ?: 0
+
+                    if (hr in 35..230) {
+                        onHeartRateReceived(hr, steps, "SportData")
+                    } else if (hr == 0) {
+                        sendLog("<< [SportData] Сенсор активен, калибровка пульса... (шаги: $steps)")
+                    }
+                    return
+                }
+
+                // RealTimeStats (field 39)
                 val rtsBytes = healthFields[39]?.asBytes()
                 if (rtsBytes != null) {
                     lastPulsePacketTime = System.currentTimeMillis()
@@ -650,17 +679,6 @@ class PulseBleService : Service() {
                     }
                     return
                 }
-            }
-        }
-
-        // 4. Подтверждение пакетов метрик датчиков (CMD_RAW_SENSOR_ACK = 49 для subtype 50 / 53)
-        if (type == 8 && (subtype == 50 || subtype == 53)) {
-            lastPulsePacketTime = System.currentTimeMillis()
-            rawSensorBatchesSinceAck++
-            if (rawSensorBatchesSinceAck >= 5) {
-                rawSensorBatchesSinceAck = 0
-                rawSensorAckCounter++
-                sendRawSensorAck(gatt, rawSensorAckCounter)
             }
         }
 
