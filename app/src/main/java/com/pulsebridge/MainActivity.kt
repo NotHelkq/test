@@ -939,7 +939,6 @@ class MainActivity : AppCompatActivity() {
             rangeButtons[range] = btn
             rangeButtonsContainer.addView(btn)
         }
-        updateRangePillsUI()
         hScrollView.addView(rangeButtonsContainer)
         graphCard.addView(hScrollView)
 
@@ -992,6 +991,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         graphCard.addView(hrChartView)
+        updateRangePillsUI()
         root.addView(graphCard)
 
         // ==========================================
