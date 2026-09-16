@@ -90,7 +90,9 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(16), dp(24), dp(16), dp(16))
         }
 
+        // ==========================================
         // 1. HEADER (Title + Status Pill)
+        // ==========================================
         val headerRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -134,7 +136,9 @@ class MainActivity : AppCompatActivity() {
         headerRow.addView(tvStatusBadge)
         root.addView(headerRow)
 
+        // ==========================================
         // 2. HERO CARD (Heart Rate & Mini Stats)
+        // ==========================================
         val heroCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -174,7 +178,7 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
         }
 
-        // Mini metrics: ШАГИ | ЗАРЯД | УСТРОЙСТВО
+        // Mini metrics row: ШАГИ | ЗАРЯД | УСТРОЙСТВО
         val metricsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -195,7 +199,9 @@ class MainActivity : AppCompatActivity() {
         heroCard.addView(metricsRow)
         root.addView(heroCard)
 
+        // ==========================================
         // 3. ACTION BUTTONS
+        // ==========================================
         btnToggle = Button(this).apply {
             text = "▶  СТАРТ МОНИТОРИНГА"
             textSize = 15f
@@ -268,7 +274,9 @@ class MainActivity : AppCompatActivity() {
         btnRow.addView(btnClear)
         root.addView(btnRow)
 
+        // ==========================================
         // 4. LIVE CONSOLE / LOGS CARD
+        // ==========================================
         val consoleHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL

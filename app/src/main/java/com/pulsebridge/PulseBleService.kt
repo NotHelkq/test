@@ -307,7 +307,7 @@ class PulseBleService : Service() {
             gatt.writeCharacteristic(ch)
         }
 
-        // Защитный таймаут на случай задержки стека BLE
+        // Защитный таймаут: если onCharacteristicWrite не вызвался в течение 350мс
         scope.launch {
             delay(350)
             synchronized(this@PulseBleService) {
