@@ -155,6 +155,90 @@ object AppStrings {
 }
 
 
+/**
+ * Custom vector electric pulse wave glyph with dynamic neon glow bloom
+ * and real-time beat pulse animation (zero hearts, zero emoji).
+ */
+class PulseGlyphView @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+    defStyleAttr: Int = 0
+) : View(context, attrs, defStyleAttr) {
+
+    private var isClutch = false
+    private var activeColor = Color.parseColor("#A855F7")
+    private val glyphPath = Path()
+
+    private val strokeGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+
+    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+
+    private val sparkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.WHITE
+    }
+
+    fun setStatus(clutch: Boolean, bpm: Int) {
+        isClutch = clutch
+        activeColor = when {
+            bpm <= 0 -> Color.parseColor("#4A2574")
+            clutch -> Color.parseColor("#FF0055")
+            bpm >= 130 -> Color.parseColor("#EF4444")
+            bpm >= 100 -> Color.parseColor("#F59E0B")
+            else -> Color.parseColor("#A855F7")
+        }
+        invalidate()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0 || h <= 0) return
+
+        val s = minOf(w, h) / 48f
+        val cx = w / 2f
+        val cy = h / 2f
+
+        glyphPath.reset()
+        glyphPath.moveTo(cx - 20f * s, cy)
+        glyphPath.lineTo(cx - 13f * s, cy)
+        glyphPath.lineTo(cx - 8f * s, cy - 6f * s)
+        glyphPath.lineTo(cx - 3f * s, cy + 8f * s)
+        glyphPath.lineTo(cx + 3f * s, cy - 18f * s)
+        glyphPath.lineTo(cx + 8f * s, cy + 16f * s)
+        glyphPath.lineTo(cx + 13f * s, cy - 6f * s)
+        glyphPath.lineTo(cx + 16f * s, cy)
+        glyphPath.lineTo(cx + 20f * s, cy)
+
+        val glowAlpha = if (isClutch) 140 else 90
+        val r = Color.red(activeColor)
+        val g = Color.green(activeColor)
+        val b = Color.blue(activeColor)
+        val glowColor = Color.argb(glowAlpha, r, g, b)
+
+        strokeGlowPaint.color = glowColor
+        strokeGlowPaint.strokeWidth = s * 5.5f
+        canvas.drawPath(glyphPath, strokeGlowPaint)
+
+        strokePaint.color = activeColor
+        strokePaint.strokeWidth = s * 2.5f
+        canvas.drawPath(glyphPath, strokePaint)
+
+        val peakX = cx + 3f * s
+        val peakY = cy - 18f * s
+        canvas.drawCircle(peakX, peakY, s * 2.2f, sparkPaint)
+    }
+}
+
 class HrChartView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
