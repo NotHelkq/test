@@ -249,6 +249,81 @@ class PulseGlyphView @JvmOverloads constructor(
  * - Interactive scrubber / touch inspection
  * - Vibrant dual-layer neon beam stroke & high-contrast gradient fill
  */
+
+/**
+ * Smooth ambient radial glow underlay for the heart rate value.
+ * Dynamically computes safe radius to ensure the gradient reaches 100% transparency (0 alpha)
+ * well within the card boundaries, completely preventing rectangular bounding-box clipping.
+ */
+class SmoothAmbientGlowView @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+    defStyleAttr: Int = 0
+) : View(context, attrs, defStyleAttr) {
+
+    private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        isDither = true
+    }
+
+    private var activeColor: Int = Color.parseColor("#9333EA")
+    private var isClutch: Boolean = false
+    private var hasBpm: Boolean = false
+
+    fun updateGlow(clutch: Boolean, bpm: Int) {
+        isClutch = clutch
+        hasBpm = bpm > 0
+        activeColor = when {
+            bpm <= 0 -> Color.parseColor("#4A2574")
+            clutch -> Color.parseColor("#FF0055")
+            bpm >= 130 -> Color.parseColor("#EF4444")
+            bpm >= 100 -> Color.parseColor("#F59E0B")
+            else -> Color.parseColor("#9333EA")
+        }
+        invalidate()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return
+
+        val cx = w / 2f
+        val cy = h * 0.40f
+
+        // Safe radius strictly inside bounds, never touching card edges
+        val safeRadius = minOf(w * 0.38f, cy * 0.80f, (h - cy) * 0.80f).coerceAtLeast(dpToPx(35f))
+
+        val r = Color.red(activeColor)
+        val g = Color.green(activeColor)
+        val b = Color.blue(activeColor)
+
+        val centerAlpha = when {
+            isClutch -> 150
+            hasBpm -> 110
+            else -> 40
+        }
+
+        val colors = intArrayOf(
+            Color.argb(centerAlpha, r, g, b),
+            Color.argb((centerAlpha * 0.52f).toInt(), r, g, b),
+            Color.argb((centerAlpha * 0.16f).toInt(), r, g, b),
+            Color.argb(0, r, g, b)
+        )
+        val stops = floatArrayOf(0f, 0.38f, 0.72f, 1f)
+
+        glowPaint.shader = RadialGradient(
+            cx, cy, safeRadius,
+            colors, stops,
+            Shader.TileMode.CLAMP
+        )
+
+        canvas.drawCircle(cx, cy, safeRadius, glowPaint)
+    }
+
+    private fun dpToPx(dp: Float): Float = dp * resources.displayMetrics.density
+}
+
 class HrChartView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
@@ -291,32 +366,32 @@ class HrChartView @JvmOverloads constructor(
     private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = dpToPx(1f)
-        color = Color.parseColor("#151E30")
+        color = Color.parseColor("#231438")
         pathEffect = DashPathEffect(floatArrayOf(dpToPx(4f), dpToPx(4f)), 0f)
     }
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = dpToPx(9.5f)
         typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-        color = Color.parseColor("#4A5C78")
+        color = Color.parseColor("#7A5FA0")
     }
 
     private val scrubberLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = dpToPx(1.5f)
-        color = Color.parseColor("#00F0FF")
+        color = Color.parseColor("#A855F7")
         pathEffect = DashPathEffect(floatArrayOf(dpToPx(3f), dpToPx(3f)), 0f)
     }
 
     private val scrubberBadgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = Color.parseColor("#081224")
+        color = Color.parseColor("#180D2B")
     }
 
     private val scrubberBadgeStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = dpToPx(1f)
-        color = Color.parseColor("#00F0FF")
+        color = Color.parseColor("#A855F7")
     }
 
     private val scrubberTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -559,19 +634,19 @@ class HrChartView @JvmOverloads constructor(
 
         val latestBpm = visibleList.last()
         val isClutch = latestBpm >= 160
-        val lineColor = if (isClutch) Color.parseColor("#FF0055") else Color.parseColor("#FF2D55")
+        val lineColor = if (isClutch) Color.parseColor("#FF0055") else Color.parseColor("#A855F7")
 
         // 1. High-Contrast Gradient Fill
         fillPaint.shader = LinearGradient(
             0f, padT, 0f, padT + chartH,
-            if (isClutch) Color.argb(130, 255, 0, 85) else Color.argb(100, 255, 45, 85),
+            if (isClutch) Color.argb(130, 255, 0, 85) else Color.argb(120, 168, 85, 247),
             Color.TRANSPARENT,
             Shader.TileMode.CLAMP
         )
         canvas.drawPath(fillPath, fillPaint)
 
         // 2. Neon Beam Bloom Underlay
-        glowLinePaint.color = if (isClutch) Color.argb(100, 255, 0, 85) else Color.argb(80, 255, 45, 85)
+        glowLinePaint.color = if (isClutch) Color.argb(100, 255, 0, 85) else Color.argb(90, 168, 85, 247)
         glowLinePaint.strokeWidth = dpToPx(7f)
         canvas.drawPath(linePath, glowLinePaint)
 
@@ -582,9 +657,9 @@ class HrChartView @JvmOverloads constructor(
 
         // 4. Glowing Live Cursor at the end
         if (historicalPoints == null && zoomScale <= 1.05f) {
-            dotGlowPaint.color = if (isClutch) Color.argb(160, 255, 0, 85) else Color.argb(130, 255, 45, 85)
+            dotGlowPaint.color = if (isClutch) Color.argb(160, 255, 0, 85) else Color.argb(140, 168, 85, 247)
             canvas.drawCircle(lastX, lastY, dpToPx(8f), dotGlowPaint)
-            dotGlowPaint.color = if (isClutch) Color.argb(240, 255, 0, 85) else Color.argb(200, 255, 45, 85)
+            dotGlowPaint.color = if (isClutch) Color.argb(240, 255, 0, 85) else Color.argb(240, 168, 85, 247)
             canvas.drawCircle(lastX, lastY, dpToPx(5f), dotGlowPaint)
             canvas.drawCircle(lastX, lastY, dpToPx(2.8f), dotPaint)
         }
@@ -631,7 +706,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnLangToggle: TextView
 
     private lateinit var heroCard: FrameLayout
-    private lateinit var heroGlowAura: View
+    private lateinit var heroGlowAura: SmoothAmbientGlowView
     private lateinit var pulseGlyph: PulseGlyphView
     private lateinit var tvBpm: TextView
     private lateinit var tvBpmLabel: TextView
@@ -820,25 +895,11 @@ class MainActivity : AppCompatActivity() {
             text = " " + AppStrings.get("app_title_accent", currentLang)
             textSize = 20f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#00F0FF"))
-        }
-
-        val badgeGd = TextView(this).apply {
-            text = "GD HUD"
-            textSize = 8.5f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#00F0FF"))
-            background = makeDrawable(Color.parseColor("#09182A"), radius = dp(6).toFloat(), strokeColor = Color.parseColor("#00F0FF"), strokeWidth = dp(1))
-            setPadding(dp(5), dp(2), dp(5), dp(2))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { leftMargin = dp(8) }
+            setTextColor(Color.parseColor("#A855F7"))
         }
 
         titleLine.addView(tvAppTitle)
         titleLine.addView(tvAppTitleAccent)
-        titleLine.addView(badgeGd)
 
         tvAppSub = TextView(this).apply {
             text = AppStrings.get("device_sub", currentLang)
@@ -854,7 +915,8 @@ class MainActivity : AppCompatActivity() {
             textSize = 11f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#38BDF8"))
-            background = makeDrawable(Color.parseColor("#0F1B30"), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#1E3A8A"), strokeWidth = dp(1))
+            background = makeGradientDrawable(intArrayOf(Color.parseColor("#25133E"), Color.parseColor("#130922")), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#4A2574"), strokeWidth = dp(1))
+            setTextColor(Color.parseColor("#C084FC"))
             setPadding(dp(10), dp(5), dp(10), dp(5))
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -871,7 +933,8 @@ class MainActivity : AppCompatActivity() {
             textSize = 11f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#94A3B8"))
-            background = makeDrawable(Color.parseColor("#141C2E"), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#22304D"), strokeWidth = dp(1))
+            background = makeGradientDrawable(intArrayOf(Color.parseColor("#1D1030"), Color.parseColor("#0E071A")), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#361D54"), strokeWidth = dp(1))
+            setTextColor(Color.parseColor("#C4B5FD"))
             setPadding(dp(10), dp(5), dp(10), dp(5))
         }
 
@@ -891,9 +954,11 @@ class MainActivity : AppCompatActivity() {
             ).apply { bottomMargin = dp(12) }
         }
 
-        heroGlowAura = View(this).apply {
-            background = makeGlowAuraDrawable(isClutch = false, hasBpm = false)
-            layoutParams = FrameLayout.LayoutParams(dp(240), dp(140), Gravity.CENTER)
+        heroGlowAura = SmoothAmbientGlowView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
         }
         heroCard.addView(heroGlowAura)
 
@@ -935,7 +1000,7 @@ class MainActivity : AppCompatActivity() {
         val telemetryBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = makeDrawable(Color.parseColor("#090E1A"), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#152033"), strokeWidth = dp(1))
+            background = makeGradientDrawable(intArrayOf(Color.parseColor("#170B28"), Color.parseColor("#0C0517")), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#2C1547"), strokeWidth = dp(1))
             setPadding(dp(6), dp(8), dp(6), dp(8))
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -980,10 +1045,10 @@ class MainActivity : AppCompatActivity() {
         // ==========================================
         val graphCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = makeDrawable(
-                bgColor = Color.parseColor("#0A0E1A"),
+            background = makeGradientDrawable(
+                intArrayOf(Color.parseColor("#160B26"), Color.parseColor("#0A0413")),
                 radius = dp(18).toFloat(),
-                strokeColor = Color.parseColor("#162035"),
+                strokeColor = Color.parseColor("#2F174B"),
                 strokeWidth = dp(1)
             )
             setPadding(dp(14), dp(10), dp(14), dp(10))
@@ -1015,8 +1080,9 @@ class MainActivity : AppCompatActivity() {
             text = AppStrings.get("zoom_reset", currentLang)
             textSize = 10f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#00F0FF"))
-            background = makeDrawable(Color.parseColor("#0A1C30"), radius = dp(8).toFloat(), strokeColor = Color.parseColor("#00F0FF"), strokeWidth = dp(1))
+            setTextColor(Color.parseColor("#A855F7"))
+            background = makeGradientDrawable(intArrayOf(Color.parseColor("#2E184C"), Color.parseColor("#180B2B")), radius = dp(8).toFloat(), strokeColor = Color.parseColor("#A855F7"), strokeWidth = dp(1))
+            setTextColor(Color.parseColor("#C084FC"))
             setPadding(dp(8), dp(4), dp(8), dp(4))
             visibility = View.GONE
             setOnClickListener {
@@ -1123,10 +1189,12 @@ class MainActivity : AppCompatActivity() {
             letterSpacing = 0.05f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.WHITE)
-            background = makeButtonDrawable(
-                normalColor = Color.parseColor("#10B981"),
-                pressedColor = Color.parseColor("#059669"),
-                radius = dp(14).toFloat()
+            background = makeGradientButtonDrawable(
+                colors = intArrayOf(Color.parseColor("#9333EA"), Color.parseColor("#6366F1")),
+                pressedColors = intArrayOf(Color.parseColor("#7E22CE"), Color.parseColor("#4F46E5")),
+                radius = dp(14).toFloat(),
+                strokeColor = Color.parseColor("#C084FC"),
+                strokeWidth = dp(1)
             )
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -1344,18 +1412,18 @@ class MainActivity : AppCompatActivity() {
             btn.text = range.getLabel(currentLang)
             if (range == hrChartView.activeRange && !hrChartView.isHistorical()) {
                 btn.setTextColor(Color.WHITE)
-                btn.background = makeDrawable(
-                    Color.parseColor("#2563EB"),
+                btn.background = makeGradientDrawable(
+                    intArrayOf(Color.parseColor("#9333EA"), Color.parseColor("#7C3AED")),
                     radius = dp(10).toFloat(),
-                    strokeColor = Color.parseColor("#60A5FA"),
+                    strokeColor = Color.parseColor("#C084FC"),
                     strokeWidth = dp(1)
                 )
             } else {
-                btn.setTextColor(Color.parseColor("#5A6E8C"))
-                btn.background = makeDrawable(
-                    Color.parseColor("#0C1220"),
+                btn.setTextColor(Color.parseColor("#9C8EB5"))
+                btn.background = makeGradientDrawable(
+                    intArrayOf(Color.parseColor("#1B0F2E"), Color.parseColor("#0E0619")),
                     radius = dp(10).toFloat(),
-                    strokeColor = Color.parseColor("#162035"),
+                    strokeColor = Color.parseColor("#2C174A"),
                     strokeWidth = dp(1)
                 )
             }
@@ -1373,7 +1441,7 @@ class MainActivity : AppCompatActivity() {
             consoleHeader.visibility = View.GONE
             consoleCard.visibility = View.GONE
             btnHideLogs.text = AppStrings.get("btn_show_logs", currentLang)
-            btnHideLogs.setTextColor(Color.parseColor("#00F0FF"))
+            btnHideLogs.setTextColor(Color.parseColor("#A855F7"))
         }
     }
 
@@ -1681,14 +1749,15 @@ class MainActivity : AppCompatActivity() {
             }
             else -> {
                 tvStatusBadge.setTextColor(Color.parseColor("#94A3B8"))
-                tvStatusBadge.background = makeDrawable(Color.parseColor("#141C2E"), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#22304D"), strokeWidth = dp(1))
+                tvStatusBadge.background = makeGradientDrawable(intArrayOf(Color.parseColor("#1D1030"), Color.parseColor("#0E071A")), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#361D54"), strokeWidth = dp(1))
+            setTextColor(Color.parseColor("#C4B5FD"))
             }
         }
     }
 
     private fun updateHeroGlow(isClutch: Boolean, bpm: Int) {
         heroCard.background = makeHeroCardDrawable(isClutch)
-        heroGlowAura.background = makeGlowAuraDrawable(isClutch, bpm > 0)
+        heroGlowAura.updateGlow(isClutch, bpm)
     }
 
     private fun startPulseGlyphAnimation(bpm: Int) {
@@ -1773,10 +1842,12 @@ class MainActivity : AppCompatActivity() {
         isRunning = true
         sessionStartTimeMs = System.currentTimeMillis()
         btnToggle.text = AppStrings.get("btn_stop", currentLang)
-        btnToggle.background = makeButtonDrawable(
-            normalColor = Color.parseColor("#EF4444"),
-            pressedColor = Color.parseColor("#DC2626"),
-            radius = dp(14).toFloat()
+        btnToggle.background = makeGradientButtonDrawable(
+            colors = intArrayOf(Color.parseColor("#FF0055"), Color.parseColor("#DC2626")),
+            pressedColors = intArrayOf(Color.parseColor("#CC0044"), Color.parseColor("#991B1B")),
+            radius = dp(14).toFloat(),
+            strokeColor = Color.parseColor("#FF4D79"),
+            strokeWidth = dp(1)
         )
         val intent = Intent(this, PulseBleService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -1790,10 +1861,12 @@ class MainActivity : AppCompatActivity() {
         isRunning = false
         saveCurrentSession()
         btnToggle.text = AppStrings.get("btn_start", currentLang)
-        btnToggle.background = makeButtonDrawable(
-            normalColor = Color.parseColor("#10B981"),
-            pressedColor = Color.parseColor("#059669"),
-            radius = dp(14).toFloat()
+        btnToggle.background = makeGradientButtonDrawable(
+            colors = intArrayOf(Color.parseColor("#9333EA"), Color.parseColor("#6366F1")),
+            pressedColors = intArrayOf(Color.parseColor("#7E22CE"), Color.parseColor("#4F46E5")),
+            radius = dp(14).toFloat(),
+            strokeColor = Color.parseColor("#C084FC"),
+            strokeWidth = dp(1)
         )
         stopService(Intent(this, PulseBleService::class.java))
         updateStatusBadge("Остановлено")
@@ -1826,60 +1899,71 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun makeHeroCardDrawable(isClutch: Boolean): GradientDrawable {
-        return GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
+        return GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            if (isClutch) {
+                intArrayOf(Color.parseColor("#2A0A18"), Color.parseColor("#15050D"))
+            } else {
+                intArrayOf(Color.parseColor("#1A0F2B"), Color.parseColor("#0E0719"))
+            }
+        ).apply {
             cornerRadius = dp(20).toFloat()
             if (isClutch) {
-                setColor(Color.parseColor("#160A14"))
                 setStroke(dp(2), Color.parseColor("#FF0055"))
             } else {
-                setColor(Color.parseColor("#090E1A"))
-                setStroke(dp(1), Color.parseColor("#1A263D"))
+                setStroke(dp(1), Color.parseColor("#381F54"))
             }
         }
     }
 
-    private fun makeGlowAuraDrawable(isClutch: Boolean, hasBpm: Boolean): GradientDrawable {
-        return GradientDrawable().apply {
-            gradientType = GradientDrawable.RADIAL_GRADIENT
-            gradientRadius = dp(140).toFloat()
-            if (!hasBpm) {
-                setColors(intArrayOf(
-                    Color.argb(40, 0, 240, 255),
-                    Color.argb(10, 0, 240, 255),
-                    Color.TRANSPARENT
-                ))
-            } else if (isClutch) {
-                setColors(intArrayOf(
-                    Color.argb(150, 255, 0, 85),
-                    Color.argb(55, 255, 0, 85),
-                    Color.TRANSPARENT
-                ))
-            } else {
-                setColors(intArrayOf(
-                    Color.argb(95, 0, 240, 255),
-                    Color.argb(32, 0, 240, 255),
-                    Color.TRANSPARENT
-                ))
+    private fun makeGradientDrawable(
+        colors: IntArray,
+        radius: Float = 0f,
+        strokeColor: Int = 0,
+        strokeWidth: Int = 0,
+        orientation: GradientDrawable.Orientation = GradientDrawable.Orientation.LEFT_RIGHT
+    ): GradientDrawable {
+        return GradientDrawable(orientation, colors).apply {
+            cornerRadius = radius
+            if (strokeWidth > 0 && strokeColor != 0) {
+                setStroke(strokeWidth, strokeColor)
             }
         }
     }
 
-    private fun makeButtonDrawable(normalColor: Int, pressedColor: Int, radius: Float): StateListDrawable {
-        val normal = makeDrawable(normalColor, radius)
-        val pressed = makeDrawable(pressedColor, radius)
+    private fun makeGradientButtonDrawable(
+        colors: IntArray,
+        pressedColors: IntArray,
+        radius: Float,
+        strokeColor: Int = 0,
+        strokeWidth: Int = 0,
+        orientation: GradientDrawable.Orientation = GradientDrawable.Orientation.LEFT_RIGHT
+    ): StateListDrawable {
+        val normal = GradientDrawable(orientation, colors).apply {
+            cornerRadius = radius
+            if (strokeWidth > 0 && strokeColor != 0) setStroke(strokeWidth, strokeColor)
+        }
+        val pressed = GradientDrawable(orientation, pressedColors).apply {
+            cornerRadius = radius
+            if (strokeWidth > 0 && strokeColor != 0) setStroke(strokeWidth, strokeColor)
+        }
         return StateListDrawable().apply {
             addState(intArrayOf(android.R.attr.state_pressed), pressed)
             addState(intArrayOf(), normal)
         }
     }
 
-    private fun makeToolbarButtonDrawable(): StateListDrawable {
-        val normal = makeDrawable(Color.parseColor("#0D1422"), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#182236"), strokeWidth = dp(1))
-        val pressed = makeDrawable(Color.parseColor("#152033"), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#253654"), strokeWidth = dp(1))
-        return StateListDrawable().apply {
-            addState(intArrayOf(android.R.attr.state_pressed), pressed)
-            addState(intArrayOf(), normal)
-        }
+    private fun makeToolbarButtonDrawable(
+        normalColors: IntArray = intArrayOf(Color.parseColor("#221339"), Color.parseColor("#120721")),
+        pressedColors: IntArray = intArrayOf(Color.parseColor("#371D5C"), Color.parseColor("#1F0D37")),
+        strokeColor: Int = Color.parseColor("#472575")
+    ): StateListDrawable {
+        return makeGradientButtonDrawable(
+            colors = normalColors,
+            pressedColors = pressedColors,
+            radius = dp(12).toFloat(),
+            strokeColor = strokeColor,
+            strokeWidth = dp(1)
+        )
     }
 }
