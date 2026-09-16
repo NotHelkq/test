@@ -39,6 +39,7 @@ class PulseBleService : Service() {
         private const val SERVER_URL = "https://y.shit.vc:68/api/hr"
         private const val SECRET_TOKEN = "MY_SUPER_SECRET_PULSE_KEY"
 
+        // Xiaomi Smart Band 9 Active (BLE V2)
         val SERVICE_FE95: UUID = UUID.fromString("0000fe95-0000-1000-8000-00805f9b34fb")
         val CHAR_RX_005E: UUID = UUID.fromString("0000005e-0000-1000-8000-00805f9b34fb")
         val CHAR_TX_005F: UUID = UUID.fromString("0000005f-0000-1000-8000-00805f9b34fb")
@@ -55,9 +56,6 @@ class PulseBleService : Service() {
     private val rxBuffer = ByteArrayOutputStream()
     private val seqCounter = AtomicInteger(0)
 
-    private val writeQueue = LinkedList<ByteArray>()
-    private var isWriting = false
-
     private val secretKey = hexStringToByteArray(AUTH_KEY_HEX)
     private val phoneNonce = ByteArray(16)
     private var watchNonce = ByteArray(16)
@@ -66,8 +64,13 @@ class PulseBleService : Service() {
     private var encryptionNonce = ByteArray(4)
     private var decryptionNonce = ByteArray(4)
 
+    private var isSessionConfigured = false
     private var isAuthenticated = false
     private var isStreaming = false
+    private var pingJob: Job? = null
+
+    private var lastRecordedBpm = 0
+    private var lastRecordedSteps = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -89,6 +92,7 @@ class PulseBleService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        pingJob?.cancel()
         stopHeartRateStream()
         bluetoothGatt?.close()
         bluetoothGatt = null
@@ -106,6 +110,10 @@ class PulseBleService : Service() {
 
     private fun sendBpmUpdate(bpm: Int) {
         sendBroadcast(Intent("com.pulsebridge.BPM").apply { putExtra("bpm", bpm) })
+    }
+
+    private fun sendStatsUpdate(steps: Int) {
+        sendBroadcast(Intent("com.pulsebridge.STATS").apply { putExtra("steps", steps) })
     }
 
     private fun connectDirect() {
@@ -146,7 +154,7 @@ class PulseBleService : Service() {
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             val sFe95 = gatt.getService(SERVICE_FE95)
             if (sFe95 == null) {
-                sendLog("ОШИБКА: Служба 0xfe95 не найдена!")
+                sendLog("ОШИБКА: Служба 0xfe95 не найдена на браслете!")
                 return
             }
 
@@ -154,7 +162,7 @@ class PulseBleService : Service() {
             txChar = sFe95.getCharacteristic(CHAR_TX_005F)
 
             if (rxChar == null || txChar == null) {
-                sendLog("ОШИБКА: Каналы 0x005e/0x005f не найдены!")
+                sendLog("ОШИБКА: Характеристики 0x005e/0x005f не найдены!")
                 return
             }
 
@@ -166,114 +174,42 @@ class PulseBleService : Service() {
             if (desc != null) {
                 writeDescriptorCompat(gatt, desc, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
             } else {
-                sendLog("ОШИБКА: Descriptor не найден на 0x005e")
+                sendLog("ОШИБКА: Client config descriptor не найден на 0x005e")
             }
         }
 
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             if (descriptor.characteristic.uuid == CHAR_RX_005E) {
                 sendLog("Подписка на 0x005e активна! Запуск согласования сессии V2...")
-                sendSessionConfigRequest()
-            }
-        }
-
-        override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-            synchronized(writeQueue) {
-                isWriting = false
-                sendNextFromQueue()
+                sendSessionConfigRequest(gatt)
             }
         }
 
         @Suppress("DEPRECATION")
         @Deprecated("Deprecated in Java")
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            handleRxData(characteristic.value ?: ByteArray(0))
+            handleRxData(gatt, characteristic.value ?: ByteArray(0))
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
-            handleRxData(value)
+            handleRxData(gatt, value)
         }
     }
 
     private fun resetState() {
-        synchronized(writeQueue) {
-            writeQueue.clear()
-            isWriting = false
-        }
+        pingJob?.cancel()
         rxBuffer.reset()
         seqCounter.set(0)
+        isSessionConfigured = false
         isAuthenticated = false
         isStreaming = false
     }
 
     // =========================================================================
-    // Очередь записи BLE (исключает сбои Android BLE)
+    // Пакетный уровень Xiaomi SPP V2
     // =========================================================================
 
-    private fun queueTx(data: ByteArray) {
-        synchronized(writeQueue) {
-            writeQueue.add(data)
-            if (!isWriting) {
-                sendNextFromQueue()
-            }
-        }
-    }
-
-    private fun sendNextFromQueue() {
-        val data = synchronized(writeQueue) {
-            if (writeQueue.isEmpty()) {
-                isWriting = false
-                return
-            }
-            isWriting = true
-            writeQueue.poll()
-        } ?: return
-
-        val gatt = bluetoothGatt
-        val ch = txChar
-        if (gatt == null || ch == null) {
-            synchronized(writeQueue) { isWriting = false }
-            return
-        }
-
-        val success = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeCharacteristic(ch, data, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == BluetoothStatusCodes.SUCCESS
-        } else {
-            @Suppress("DEPRECATION")
-            ch.value = data
-            @Suppress("DEPRECATION")
-            gatt.writeCharacteristic(ch)
-        }
-
-        if (!success) {
-            sendLog("GATT Write отклонен стеком, повтор через 50мс...")
-            scope.launch {
-                delay(50)
-                synchronized(writeQueue) {
-                    writeQueue.addFirst(data)
-                    isWriting = false
-                    sendNextFromQueue()
-                }
-            }
-        }
-    }
-
-    private fun writeDescriptorCompat(gatt: BluetoothGatt, desc: BluetoothGattDescriptor, value: ByteArray) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeDescriptor(desc, value)
-        } else {
-            @Suppress("DEPRECATION")
-            desc.value = value
-            @Suppress("DEPRECATION")
-            gatt.writeDescriptor(desc)
-        }
-    }
-
-    // =========================================================================
-    // Протокол Xiaomi SPP V2
-    // =========================================================================
-
-    private fun sendSessionConfigRequest() {
+    private fun sendSessionConfigRequest(gatt: BluetoothGatt) {
         val payload = byteArrayOf(
             0x01,
             0x01, 0x03, 0x00, 0x01, 0x00, 0x00,
@@ -284,15 +220,15 @@ class PulseBleService : Service() {
 
         val packet = buildPacket(packetType = 2, seq = 0, payload = payload)
         sendLog(">> [0x005f] Старт сессии V2 (${packet.size} байт)")
-        queueTx(packet)
+        writeTx(gatt, packet)
     }
 
-    private fun sendAck(seq: Int) {
+    private fun sendAck(gatt: BluetoothGatt, seq: Int) {
         val ack = buildPacket(packetType = 1, seq = seq, payload = ByteArray(0))
-        queueTx(ack)
+        writeTx(gatt, ack)
     }
 
-    private fun sendDataPacket(rawChannel: Int, opCode: Int, data: ByteArray) {
+    private fun sendDataPacket(gatt: BluetoothGatt, rawChannel: Int, opCode: Int, data: ByteArray) {
         val payload = ByteBuffer.allocate(2 + data.size).order(ByteOrder.LITTLE_ENDIAN)
             .put((rawChannel and 0x0F).toByte())
             .put((opCode and 0xFF).toByte())
@@ -301,7 +237,7 @@ class PulseBleService : Service() {
 
         val seq = seqCounter.getAndIncrement() and 0xFF
         val packet = buildPacket(packetType = 3, seq = seq, payload = payload)
-        queueTx(packet)
+        writeTx(gatt, packet)
     }
 
     private fun buildPacket(packetType: Int, seq: Int, payload: ByteArray): ByteArray {
@@ -330,14 +266,34 @@ class PulseBleService : Service() {
         return Integer.reverse(crc) ushr 16
     }
 
+    private fun writeTx(gatt: BluetoothGatt, data: ByteArray) {
+        val ch = txChar ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeCharacteristic(ch, data, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+        } else {
+            @Suppress("DEPRECATION")
+            ch.value = data
+            @Suppress("DEPRECATION")
+            gatt.writeCharacteristic(ch)
+        }
+    }
+
+    private fun writeDescriptorCompat(gatt: BluetoothGatt, desc: BluetoothGattDescriptor, value: ByteArray) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeDescriptor(desc, value)
+        } else {
+            @Suppress("DEPRECATION")
+            desc.value = value
+            @Suppress("DEPRECATION")
+            gatt.writeDescriptor(desc)
+        }
+    }
+
     // =========================================================================
-    // Прием и разбор пакетов
+    // Прием и разбор пакетов (RX Buffer)
     // =========================================================================
 
-    private fun handleRxData(chunk: ByteArray) {
-        val chunkHex = chunk.joinToString(" ") { String.format("%02X", it) }
-        sendLog("<< [0x005e] RX (${chunk.size} байт): $chunkHex")
-
+    private fun handleRxData(gatt: BluetoothGatt, chunk: ByteArray) {
         synchronized(rxBuffer) {
             rxBuffer.write(chunk)
             val buf = rxBuffer.toByteArray()
@@ -361,7 +317,7 @@ class PulseBleService : Service() {
                 val payload = buf.copyOfRange(offset + 8, offset + totalPacketLen)
                 offset += totalPacketLen
 
-                processPacket(packetType, seq, payload)
+                processPacket(gatt, packetType, seq, payload)
             }
 
             rxBuffer.reset()
@@ -371,25 +327,28 @@ class PulseBleService : Service() {
         }
     }
 
-    private fun processPacket(packetType: Int, seq: Int, payload: ByteArray) {
+    private fun processPacket(gatt: BluetoothGatt, packetType: Int, seq: Int, payload: ByteArray) {
         when (packetType) {
             1 -> {
                 // ACK
             }
             2 -> {
-                // SessionConfig ответ от часов
+                // SessionConfig
                 val opCode = if (payload.isNotEmpty()) payload[0].toInt() and 0xFF else -1
-                sendLog("<< [SessionConfig] Подтверждение (OpCode: $opCode)")
+                sendLog("<< [SessionConfig] OpCode: $opCode")
                 if (opCode == 2) {
+                    isSessionConfigured = true
                     sendLog("Сессия согласована! Отправка Phone Nonce (Auth Шаг 1)...")
-                    sendPhoneNonce()
+                    sendAck(gatt, seq)
+                    sendPhoneNonce(gatt)
                 }
             }
             3 -> {
-                // DATA пакет
-                sendAck(seq)
+                // DATA
+                sendAck(gatt, seq)
                 if (payload.size < 2) return
 
+                val rawChannel = payload[0].toInt() and 0x0F
                 val opCode = payload[1].toInt() and 0xFF
                 var data = payload.copyOfRange(2, payload.size)
 
@@ -397,12 +356,24 @@ class PulseBleService : Service() {
                     try {
                         data = decryptV2(decryptionKey, data)
                     } catch (e: Exception) {
-                        sendLog("Ошибка дешифровки данных: ${e.message}")
+                        sendLog("<< [Ch $rawChannel] Ошибка дешифровки: ${e.message}")
                         return
                     }
                 }
 
-                handleProtobufCommand(data)
+                when (rawChannel) {
+                    1 -> {
+                        // Protobuf commands
+                        handleProtobufCommand(gatt, data)
+                    }
+                    5 -> {
+                        // Activity stream (Streamed samples of HR/steps)
+                        handleActivityChannel(data)
+                    }
+                    else -> {
+                        sendLog("<< [Ch $rawChannel] Данные (${data.size} B): ${data.toHex()}")
+                    }
+                }
             }
         }
     }
@@ -411,7 +382,7 @@ class PulseBleService : Service() {
     // Аутентификация Xiaomi Protobuf
     // =========================================================================
 
-    private fun sendPhoneNonce() {
+    private fun sendPhoneNonce(gatt: BluetoothGatt) {
         SecureRandom().nextBytes(phoneNonce)
         val nonceMsg = ProtoWriter.encodeBytes(1, phoneNonce)
         val authMsg = ProtoWriter.encodeBytes(30, nonceMsg)
@@ -420,58 +391,10 @@ class PulseBleService : Service() {
                 ProtoWriter.encodeBytes(3, authMsg)
 
         sendLog(">> [Auth Шаг 1] Отправка Phone Nonce...")
-        sendDataPacket(rawChannel = 1, opCode = 1, data = cmdMsg)
+        sendDataPacket(gatt, rawChannel = 1, opCode = 1, data = cmdMsg)
     }
 
-    private fun handleProtobufCommand(data: ByteArray) {
-        val cmd = ProtoReader.parseFields(data)
-        val type = cmd[1]?.asLong()?.toInt() ?: -1
-        val subtype = cmd[2]?.asLong()?.toInt() ?: -1
-
-        if (type == 1 && subtype == 26) {
-            val authBytes = cmd[3]?.asBytes() ?: return
-            val authFields = ProtoReader.parseFields(authBytes)
-            val watchNonceBytes = authFields[31]?.asBytes() ?: return
-            val watchNonceFields = ProtoReader.parseFields(watchNonceBytes)
-
-            watchNonce = watchNonceFields[1]?.asBytes() ?: return
-            val watchHmac = watchNonceFields[2]?.asBytes() ?: return
-
-            sendLog("<< [Auth Шаг 2] Watch Nonce получен! Проверка ключа...")
-            deriveKeysAndFinishAuth(watchHmac)
-        } else if (type == 1 && subtype == 27) {
-            val status = cmd[100]?.asLong()?.toInt() ?: 1
-            if (status == 1) {
-                isAuthenticated = true
-                sendLog("🎉 УСПЕШНАЯ АВТОРИЗАЦИЯ Band 9 Active! Ключ принят!")
-                sendState("Авторизовано! Запуск пульса...")
-
-                startRealtimeHeartRate()
-            } else {
-                sendLog("ОШИБКА: Браслет отклонил ключ (статус $status)!")
-                sendState("Ошибка авторизации")
-            }
-        } else if (type == 8 && subtype == 47) {
-            val healthBytes = cmd[10]?.asBytes() ?: return
-            val healthFields = ProtoReader.parseFields(healthBytes)
-            val rtsBytes = healthFields[39]?.asBytes() ?: return
-            val rtsFields = ProtoReader.parseFields(rtsBytes)
-
-            val hr = rtsFields[4]?.asLong()?.toInt() ?: 0
-            val steps = rtsFields[1]?.asLong()?.toInt() ?: 0
-            val calories = rtsFields[2]?.asLong()?.toInt() ?: 0
-
-            if (hr in 35..230) {
-                sendLog("❤️ Пульс: $hr BPM | Шаги: $steps | Ккал: $calories")
-                sendState("Трансляция ($hr BPM)")
-                sendBpmUpdate(hr)
-                updateNotification(hr, steps)
-                sendPulseToServer(hr)
-            }
-        }
-    }
-
-    private fun deriveKeysAndFinishAuth(watchHmac: ByteArray) {
+    private fun deriveKeysAndFinishAuth(gatt: BluetoothGatt, watchHmac: ByteArray) {
         val step2Hmac = computeAuthStep3Hmac(secretKey, phoneNonce, watchNonce)
         decryptionKey = step2Hmac.copyOfRange(0, 16)
         encryptionKey = step2Hmac.copyOfRange(16, 32)
@@ -506,24 +429,196 @@ class PulseBleService : Service() {
                 ProtoWriter.encodeVarint(2, 27) +
                 ProtoWriter.encodeBytes(3, authMsg)
 
-        sendDataPacket(rawChannel = 1, opCode = 1, data = cmdMsg)
+        sendDataPacket(gatt, rawChannel = 1, opCode = 1, data = cmdMsg)
     }
 
-    private fun startRealtimeHeartRate() {
-        isStreaming = true
-        val cmd = byteArrayOf(0x08, 0x08, 0x10, 0x2D)
-        val encryptedCmd = encryptV2(encryptionKey, cmd)
+    private fun handleProtobufCommand(gatt: BluetoothGatt, data: ByteArray) {
+        val cmd = ProtoReader.parseFields(data)
+        val type = cmd[1]?.asLong()?.toInt() ?: -1
+        val subtype = cmd[2]?.asLong()?.toInt() ?: -1
 
-        sendLog(">> [Realtime Stats] Старт посекундного пульса (type=8, subtype=45)...")
-        sendDataPacket(rawChannel = 1, opCode = 2, data = encryptedCmd)
+        if (type == 1 && subtype == 26) {
+            val authBytes = cmd[3]?.asBytes() ?: return
+            val authFields = ProtoReader.parseFields(authBytes)
+            val watchNonceBytes = authFields[31]?.asBytes() ?: return
+            val watchNonceFields = ProtoReader.parseFields(watchNonceBytes)
+
+            watchNonce = watchNonceFields[1]?.asBytes() ?: return
+            val watchHmac = watchNonceFields[2]?.asBytes() ?: return
+
+            sendLog("<< [Auth Шаг 2] Watch Nonce получен! Проверка ключа...")
+            deriveKeysAndFinishAuth(gatt, watchHmac)
+            return
+        }
+
+        if (type == 1 && subtype == 27) {
+            val status = cmd[100]?.asLong()?.toInt() ?: 1
+            if (status == 1) {
+                isAuthenticated = true
+                sendLog("🎉 УСПЕШНАЯ АВТОРИЗАЦИЯ Band 9 Active! Ключ принят!")
+                sendState("Авторизовано! Запуск потока пульса...")
+
+                activateContinuousSensors(gatt)
+            } else {
+                sendLog("ОШИБКА: Браслет отклонил авторизацию (статус $status)!")
+                sendState("Ошибка авторизации")
+            }
+            return
+        }
+
+        // Логируем все входящие команды Protobuf
+        sendLog("<< [Protobuf Ch 1] Cmd type=$type, subtype=$subtype (${data.size} B)")
+
+        // Разбор RealTimeStats (type = 8, subtype = 47)
+        if (type == 8 && subtype == 47) {
+            val healthBytes = cmd[10]?.asBytes()
+            if (healthBytes != null) {
+                val healthFields = ProtoReader.parseFields(healthBytes)
+                val rtsBytes = healthFields[39]?.asBytes()
+                if (rtsBytes != null) {
+                    val rtsFields = ProtoReader.parseFields(rtsBytes)
+                    val hr = rtsFields[4]?.asLong()?.toInt() ?: 0
+                    val steps = rtsFields[1]?.asLong()?.toInt() ?: 0
+
+                    if (hr in 35..230) {
+                        onHeartRateReceived(hr, steps, "Protobuf RTS")
+                    }
+                    return
+                }
+            }
+        }
+
+        // Сканер на наличие пульса в полях
+        scanProtobufForHeartRate(cmd)
+    }
+
+    private fun handleActivityChannel(data: ByteArray) {
+        sendLog("<< [Activity Ch 5] Поток сэмплов (${data.size} B): ${data.takeLast(12).toHex()}")
+
+        if (data.size >= 6) {
+            val lastBytes = data.takeLast(6)
+            for (b in lastBytes.reversed()) {
+                val ub = b.toInt() and 0xFF
+                if (ub in 40..220) {
+                    onHeartRateReceived(ub, null, "Activity Ch 5")
+                    return
+                }
+            }
+        }
+    }
+
+    private fun scanProtobufForHeartRate(fields: Map<Int, ProtoReader.Value>) {
+        for ((_, value) in fields) {
+            when (value) {
+                is ProtoReader.Value.Varint -> {
+                    val v = value.v.toInt()
+                    if (v in 45..220 && v != lastRecordedBpm) {
+                        // Возможный пульс
+                    }
+                }
+                is ProtoReader.Value.LengthDelimited -> {
+                    val subFields = ProtoReader.parseFields(value.bytes)
+                    if (subFields.isNotEmpty()) {
+                        scanProtobufForHeartRate(subFields)
+                    }
+                }
+                else -> {}
+            }
+        }
+    }
+
+    private fun onHeartRateReceived(bpm: Int, steps: Int?, source: String) {
+        lastRecordedBpm = bpm
+        if (steps != null && steps > 0) {
+            lastRecordedSteps = steps
+            sendStatsUpdate(steps)
+        }
+
+        sendLog("❤️ [$source] Пульс: $bpm BPM" + if (lastRecordedSteps > 0) " | Шаги: $lastRecordedSteps" else "")
+        sendState("Трансляция ($bpm BPM)")
+        sendBpmUpdate(bpm)
+        updateNotification(bpm, lastRecordedSteps)
+        sendPulseToServer(bpm)
+    }
+
+    // =========================================================================
+    // Запуск постоянного замера сенсора
+    // =========================================================================
+
+    private fun activateContinuousSensors(gatt: BluetoothGatt) {
+        isStreaming = true
+
+        scope.launch {
+            try {
+                // 1. Установка режима постоянного замера пульса (интервал 1 мин / smart)
+                val hrConfigBytes = byteArrayOf(
+                    0x08, 0x08, 0x10, 0x0B, 0x52.toByte(), 0x08, 0x42, 0x06, 0x10, 0x01, 0x2A, 0x02, 0x08, 0x01
+                )
+                val encHrConfig = encryptV2(encryptionKey, hrConfigBytes)
+                sendLog(">> Настройка постоянного пульса (type=8, subtype=11)...")
+                sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = encHrConfig)
+                delay(300)
+
+                // 2. Включение потока RealTimeStats (type=8, subtype=45)
+                val rtsStart = byteArrayOf(0x08, 0x08, 0x10, 0x2D)
+                val encRts = encryptV2(encryptionKey, rtsStart)
+                sendLog(">> Старт посекундного потока RealTimeStats (type=8, subtype=45)...")
+                sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = encRts)
+                delay(300)
+
+                // 3. Запуск тренировки (Workout Status STARTED), зажигающей диоды сенсора
+                val ts = (System.currentTimeMillis() / 1000).toInt()
+                val workoutMsg = ProtoWriter.encodeVarint(1, ts.toLong()) +
+                        ProtoWriter.encodeVarint(3, 1) +
+                        ProtoWriter.encodeVarint(4, 0)
+                val healthWorkout = ProtoWriter.encodeBytes(20, workoutMsg)
+                val cmdWorkout = ProtoWriter.encodeVarint(1, 8) +
+                        ProtoWriter.encodeVarint(2, 26) +
+                        ProtoWriter.encodeBytes(10, healthWorkout)
+
+                val encWorkout = encryptV2(encryptionKey, cmdWorkout)
+                sendLog(">> Запуск спортивного режима для непрерывного сенсора (type=8, subtype=26)...")
+                sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = encWorkout)
+
+                // 4. Периодический keep-alive раз в 15 секунд
+                pingJob?.cancel()
+                pingJob = scope.launch {
+                    while (isActive && isAuthenticated) {
+                        delay(15000)
+                        try {
+                            val pingEnc = encryptV2(encryptionKey, rtsStart)
+                            sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = pingEnc)
+                        } catch (_: Exception) {}
+                    }
+                }
+
+            } catch (e: Exception) {
+                sendLog("ОШИБКА старта сенсоров: ${e.message}")
+            }
+        }
     }
 
     private fun stopHeartRateStream() {
         if (!isAuthenticated || !isStreaming) return
+        val gatt = bluetoothGatt ?: return
         try {
+            // RealTimeStats Stop (type = 8, subtype = 46)
             val cmd = byteArrayOf(0x08, 0x08, 0x10, 0x2E)
             val encryptedCmd = encryptV2(encryptionKey, cmd)
-            sendDataPacket(rawChannel = 1, opCode = 2, data = encryptedCmd)
+            sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = encryptedCmd)
+
+            // Finish workout (status = 3 Finished)
+            val ts = (System.currentTimeMillis() / 1000).toInt()
+            val workoutMsg = ProtoWriter.encodeVarint(1, ts.toLong()) +
+                    ProtoWriter.encodeVarint(3, 1) +
+                    ProtoWriter.encodeVarint(4, 3)
+            val healthWorkout = ProtoWriter.encodeBytes(20, workoutMsg)
+            val cmdWorkout = ProtoWriter.encodeVarint(1, 8) +
+                    ProtoWriter.encodeVarint(2, 26) +
+                    ProtoWriter.encodeBytes(10, healthWorkout)
+            val encWorkout = encryptV2(encryptionKey, cmdWorkout)
+            sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = encWorkout)
+
             isStreaming = false
         } catch (_: Exception) {}
     }
@@ -598,6 +693,9 @@ class PulseBleService : Service() {
         return data
     }
 
+    private fun ByteArray.toHex(): String = joinToString(" ") { String.format("%02X", it) }
+    private fun List<Byte>.toHex(): String = joinToString(" ") { String.format("%02X", it) }
+
     // =========================================================================
     // Отправка на VPS сервер и уведомления
     // =========================================================================
@@ -628,7 +726,7 @@ class PulseBleService : Service() {
     private fun updateNotification(bpm: Int, steps: Int) {
         val notification = NotificationCompat.Builder(this, "pulse_channel")
             .setContentTitle("PulseBridge: $bpm BPM")
-            .setContentText("OBS онлайн | Шагов: $steps")
+            .setContentText("OBS онлайн" + if (steps > 0) " | Шагов: $steps" else "")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)
             .build()
