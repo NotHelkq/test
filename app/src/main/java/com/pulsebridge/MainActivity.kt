@@ -65,7 +65,6 @@ object AppStrings {
             "status_stopped" -> "Stopped"
             "status_live" -> "Streaming"
             "bpm_label" -> "BEATS PER MINUTE"
-            "clutch_label" -> "🔥 CLUTCH MODE (160+)"
             "metric_min" -> "MIN"
             "metric_avg" -> "AVG"
             "metric_max" -> "MAX"
@@ -100,7 +99,6 @@ object AppStrings {
             "status_stopped" -> "Остановлено"
             "status_live" -> "В эфире"
             "bpm_label" -> "УДАРОВ В МИНУТУ"
-            "clutch_label" -> "🔥 КЛАТЧ РЕЖИМ (160+)"
             "metric_min" -> "МИН"
             "metric_avg" -> "СРЕДНИЙ"
             "metric_max" -> "МАКС"
@@ -960,8 +958,8 @@ class MainActivity : AppCompatActivity() {
                         when {
                             bpm >= 160 -> {
                                 tvBpm.setTextColor(Color.parseColor("#FF0055"))
-                                tvBpmLabel.text = AppStrings.get("clutch_label", currentLang)
-                                tvBpmLabel.setTextColor(Color.parseColor("#FF0055"))
+                                tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
+                                tvBpmLabel.setTextColor(Color.parseColor("#64748B"))
                                 pulseGlyph.setStatus(true, bpm)
                                 updateHeroGlow(isClutch = true, bpm = bpm)
                             }
@@ -1572,11 +1570,7 @@ class MainActivity : AppCompatActivity() {
         tvAppTitle.text = AppStrings.get("app_title", currentLang)
         tvAppTitleAccent.text = " " + AppStrings.get("app_title_accent", currentLang)
         tvAppSub.text = AppStrings.get("device_sub", currentLang)
-        tvBpmLabel.text = if (tvBpmLabel.text.toString().contains("КЛАТЧ") || tvBpmLabel.text.toString().contains("CLUTCH")) {
-            AppStrings.get("clutch_label", currentLang)
-        } else {
-            AppStrings.get("bpm_label", currentLang)
-        }
+        tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
         tvMinLbl.text = AppStrings.get("metric_min", currentLang)
         tvAvgLbl.text = AppStrings.get("metric_avg", currentLang)
         tvMaxLbl.text = AppStrings.get("metric_max", currentLang)
