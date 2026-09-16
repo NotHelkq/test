@@ -914,7 +914,6 @@ class MainActivity : AppCompatActivity() {
             text = if (currentLang == Lang.EN) "🇺🇸 EN" else "🇷🇺 RU"
             textSize = 11f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#38BDF8"))
             background = makeGradientDrawable(intArrayOf(Color.parseColor("#25133E"), Color.parseColor("#130922")), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#4A2574"), strokeWidth = dp(1))
             setTextColor(Color.parseColor("#C084FC"))
             setPadding(dp(10), dp(5), dp(10), dp(5))
@@ -932,7 +931,6 @@ class MainActivity : AppCompatActivity() {
             text = "● " + AppStrings.formatStatus(lastRawStatus, currentLang)
             textSize = 11f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#94A3B8"))
             background = makeGradientDrawable(intArrayOf(Color.parseColor("#1D1030"), Color.parseColor("#0E071A")), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#361D54"), strokeWidth = dp(1))
             setTextColor(Color.parseColor("#C4B5FD"))
             setPadding(dp(10), dp(5), dp(10), dp(5))
@@ -1080,7 +1078,6 @@ class MainActivity : AppCompatActivity() {
             text = AppStrings.get("zoom_reset", currentLang)
             textSize = 10f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#A855F7"))
             background = makeGradientDrawable(intArrayOf(Color.parseColor("#2E184C"), Color.parseColor("#180B2B")), radius = dp(8).toFloat(), strokeColor = Color.parseColor("#A855F7"), strokeWidth = dp(1))
             setTextColor(Color.parseColor("#C084FC"))
             setPadding(dp(8), dp(4), dp(8), dp(4))
@@ -1750,7 +1747,6 @@ class MainActivity : AppCompatActivity() {
             else -> {
                 tvStatusBadge.setTextColor(Color.parseColor("#94A3B8"))
                 tvStatusBadge.background = makeGradientDrawable(intArrayOf(Color.parseColor("#1D1030"), Color.parseColor("#0E071A")), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#361D54"), strokeWidth = dp(1))
-            setTextColor(Color.parseColor("#C4B5FD"))
             }
         }
     }
