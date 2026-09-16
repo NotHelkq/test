@@ -596,8 +596,39 @@ class PulseBleService : Service() {
             parseSystemBattery(cmd)
         }
 
-        // Разбор RealTimeStats (type = 8, subtype = 47)
-        if (type == 8 && subtype == 47) {
+        // 1. Подтверждение открытия тренировки/замера от браслета (CMD_WORKOUT_WATCH_OPEN = 30)
+        if (type == 8 && subtype == 30) {
+            sendLog("<< [Watch] Запрос старта замера/тренировки (CMD_WORKOUT_WATCH_OPEN 30). Подтверждаем...")
+            val replyBytes = ProtoWriter.encodeVarint(1, 0) +
+                    ProtoWriter.encodeVarint(2, 2) +
+                    ProtoWriter.encodeVarint(3, 2)
+            val healthReply = ProtoWriter.encodeBytes(26, replyBytes)
+            val cmdReply = ProtoWriter.encodeVarint(1, 8) +
+                    ProtoWriter.encodeVarint(2, 30) +
+                    ProtoWriter.encodeBytes(10, healthReply)
+            val encReply = encryptV2(encryptionKey, cmdReply)
+            sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = encReply)
+            return
+        }
+
+        // 2. Статус тренировки от браслета (CMD_WORKOUT_WATCH_STATUS = 26)
+        if (type == 8 && subtype == 26) {
+            val healthBytes = cmd[10]?.asBytes()
+            if (healthBytes != null) {
+                val healthFields = ProtoReader.parseFields(healthBytes)
+                val wsBytes = healthFields[20]?.asBytes()
+                if (wsBytes != null) {
+                    val wsFields = ProtoReader.parseFields(wsBytes)
+                    val status = wsFields[4]?.asLong()?.toInt() ?: -1
+                    val sport = wsFields[3]?.asLong()?.toInt() ?: -1
+                    sendLog("<< [Watch] Статус тренировки: $status, спорт=$sport")
+                }
+            }
+            return
+        }
+
+        // 3. Разбор RealTimeStats (в любом сообщении с type=8, содержащем health[39])
+        if (type == 8) {
             val healthBytes = cmd[10]?.asBytes()
             if (healthBytes != null) {
                 val healthFields = ProtoReader.parseFields(healthBytes)
@@ -609,6 +640,8 @@ class PulseBleService : Service() {
 
                     if (hr in 35..230) {
                         onHeartRateReceived(hr, steps, "Protobuf RTS")
+                    } else if (hr == 0) {
+                        sendLog("<< [Protobuf RTS] Сенсор активен, калибровка пульса... (шаги: $steps)")
                     }
                     return
                 }
@@ -633,18 +666,8 @@ class PulseBleService : Service() {
     }
 
     private fun handleActivityChannel(data: ByteArray) {
-        sendLog("<< [Activity Ch 5] Поток сэмплов (${data.size} B): ${data.takeLast(12).toHex()}")
-
-        if (data.size >= 6) {
-            val lastBytes = data.takeLast(6)
-            for (b in lastBytes.reversed()) {
-                val ub = b.toInt() and 0xFF
-                if (ub in 40..220) {
-                    onHeartRateReceived(ub, null, "Activity Ch 5")
-                    return
-                }
-            }
-        }
+        // Канал 5 используется для пакетной синхронизации истории активности с браслета
+        sendLog("<< [Activity Ch 5] Пакет истории (${data.size} B)")
     }
 
     private fun scanProtobufForHeartRate(fields: Map<Int, ProtoReader.Value>) {
@@ -691,48 +714,58 @@ class PulseBleService : Service() {
         scope.launch {
             try {
                 // 1. Запрос уровня заряда батареи (type = 2, subtype = 1)
-                val cmdBat = byteArrayOf(0x08, 0x02, 0x10, 0x01)
+                val cmdBat = ProtoWriter.encodeVarint(1, 2) + ProtoWriter.encodeVarint(2, 1)
                 val encBat = encryptV2(encryptionKey, cmdBat)
                 sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = encBat)
                 delay(300)
 
-                // 2. Установка режима постоянного замера пульса (интервал 1 мин / smart)
-                val hrConfigBytes = byteArrayOf(
-                    0x08, 0x08, 0x10, 0x0B, 0x52.toByte(), 0x08, 0x42, 0x06, 0x10, 0x01, 0x2A, 0x02, 0x08, 0x01
-                )
-                val encHrConfig = encryptV2(encryptionKey, hrConfigBytes)
+                // 2. Установка режима непрерывного замера пульса (интервал 1 мин / continuous)
+                val advBytes = ProtoWriter.encodeVarint(1, 1)
+                val hrBytes = ProtoWriter.encodeVarint(1, 0) +
+                        ProtoWriter.encodeVarint(2, 1) +
+                        ProtoWriter.encodeBytes(5, advBytes) +
+                        ProtoWriter.encodeVarint(7, 1) +
+                        ProtoWriter.encodeVarint(9, 2)
+                val healthHr = ProtoWriter.encodeBytes(8, hrBytes)
+                val cmdHr = ProtoWriter.encodeVarint(1, 8) +
+                        ProtoWriter.encodeVarint(2, 11) +
+                        ProtoWriter.encodeBytes(10, healthHr)
+                val encHrConfig = encryptV2(encryptionKey, cmdHr)
                 sendLog(">> Настройка постоянного пульса (type=8, subtype=11)...")
                 sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = encHrConfig)
                 delay(300)
 
                 // 3. Включение потока RealTimeStats (type=8, subtype=45)
-                val rtsStart = byteArrayOf(0x08, 0x08, 0x10, 0x2D)
-                val encRts = encryptV2(encryptionKey, rtsStart)
+                val cmdRts = ProtoWriter.encodeVarint(1, 8) + ProtoWriter.encodeVarint(2, 45)
+                val encRts = encryptV2(encryptionKey, cmdRts)
                 sendLog(">> Старт посекундного потока RealTimeStats (type=8, subtype=45)...")
                 sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = encRts)
                 delay(300)
 
-                // 4. Запуск тренировки (Workout Status STARTED), зажигающей диоды сенсора
+                // 4. Запуск тренировки для непрерывного включения зеленого диода сенсора (Synthetic Workout 810)
                 val ts = (System.currentTimeMillis() / 1000).toInt()
-                val workoutMsg = ProtoWriter.encodeVarint(1, ts.toLong()) +
-                        ProtoWriter.encodeVarint(3, 1) +
-                        ProtoWriter.encodeVarint(4, 0)
-                val healthWorkout = ProtoWriter.encodeBytes(20, workoutMsg)
+                val sportInfoBytes = ProtoWriter.encodeVarint(1, 16)
+                val statusWatchBytes = ProtoWriter.encodeVarint(1, ts.toLong()) +
+                        ProtoWriter.encodeBytes(2, sportInfoBytes) +
+                        ProtoWriter.encodeVarint(3, 810) +
+                        ProtoWriter.encodeVarint(4, 0) + // WORKOUT_STARTED
+                        ProtoWriter.encodeVarint(6, 3)
+                val healthWorkout = ProtoWriter.encodeBytes(20, statusWatchBytes)
                 val cmdWorkout = ProtoWriter.encodeVarint(1, 8) +
                         ProtoWriter.encodeVarint(2, 26) +
                         ProtoWriter.encodeBytes(10, healthWorkout)
 
                 val encWorkout = encryptV2(encryptionKey, cmdWorkout)
-                sendLog(">> Запуск спортивного режима для непрерывного сенсора (type=8, subtype=26)...")
+                sendLog(">> Запуск непрерывного режима сенсора (Synthetic Workout 810)...")
                 sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = encWorkout)
 
-                // 5. Периодический keep-alive раз в 15 секунд
+                // 5. Периодический опрос RealTimeStats каждые 5 секунд
                 pingJob?.cancel()
                 pingJob = scope.launch {
                     while (isActive && isAuthenticated) {
-                        delay(15000)
+                        delay(5000)
                         try {
-                            val pingEnc = encryptV2(encryptionKey, rtsStart)
+                            val pingEnc = encryptV2(encryptionKey, cmdRts)
                             sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = pingEnc)
                         } catch (_: Exception) {}
                     }
@@ -748,24 +781,31 @@ class PulseBleService : Service() {
         if (!isAuthenticated || !isStreaming) return
         val gatt = bluetoothGatt ?: return
         try {
+            isStreaming = false
+            pingJob?.cancel()
+
             // RealTimeStats Stop (type = 8, subtype = 46)
-            val cmd = byteArrayOf(0x08, 0x08, 0x10, 0x2E)
-            val encryptedCmd = encryptV2(encryptionKey, cmd)
-            sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = encryptedCmd)
+            val cmdStopRts = ProtoWriter.encodeVarint(1, 8) + ProtoWriter.encodeVarint(2, 46)
+            val encStopRts = encryptV2(encryptionKey, cmdStopRts)
+            sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = encStopRts)
 
             // Finish workout (status = 3 Finished)
             val ts = (System.currentTimeMillis() / 1000).toInt()
-            val workoutMsg = ProtoWriter.encodeVarint(1, ts.toLong()) +
-                    ProtoWriter.encodeVarint(3, 1) +
-                    ProtoWriter.encodeVarint(4, 3)
-            val healthWorkout = ProtoWriter.encodeBytes(20, workoutMsg)
-            val cmdWorkout = ProtoWriter.encodeVarint(1, 8) +
+            val sportInfoBytes = ProtoWriter.encodeVarint(1, 16)
+            val statusWatchBytes = ProtoWriter.encodeVarint(1, ts.toLong()) +
+                    ProtoWriter.encodeBytes(2, sportInfoBytes) +
+                    ProtoWriter.encodeVarint(3, 810) +
+                    ProtoWriter.encodeVarint(4, 3) + // FINISHED
+                    ProtoWriter.encodeVarint(6, 3)
+            val healthWorkout = ProtoWriter.encodeBytes(20, statusWatchBytes)
+            val cmdStopWorkout = ProtoWriter.encodeVarint(1, 8) +
                     ProtoWriter.encodeVarint(2, 26) +
                     ProtoWriter.encodeBytes(10, healthWorkout)
-            val encWorkout = encryptV2(encryptionKey, cmdWorkout)
-            sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = encWorkout)
+            val encStopWorkout = encryptV2(encryptionKey, cmdStopWorkout)
+            sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = encStopWorkout)
 
-            isStreaming = false
+            sendLog("⏹ Мониторинг пульса остановлен.")
+            sendState("Подключено (остановлено)")
         } catch (_: Exception) {}
     }
 
