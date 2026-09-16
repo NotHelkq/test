@@ -154,175 +154,6 @@ object AppStrings {
     }
 }
 
-/**
- * Custom vector cyberpunk electric pulse wave glyph with dynamic neon glow bloom
- * and real-time beat pulse animation (zero hearts, zero emoji).
- */
-class PulseGlyphView @JvmOverloads constructor(
-    context: Context,
-    attrs: AttributeSet? = null,
-    defStyleAttr: Int = 0
-) : View(context, attrs, defStyleAttr) {
-
-    private var isClutch = false
-    private var activeColor = Color.parseColor("#00F0FF")
-    private val glyphPath = Path()
-
-    private val strokeGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
-    }
-
-    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
-    }
-
-    private val sparkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-        color = Color.WHITE
-    }
-
-    fun setStatus(clutch: Boolean, bpm: Int) {
-        isClutch = clutch
-        activeColor = when {
-            bpm <= 0 -> Color.parseColor("#4A5C78")
-            clutch -> Color.parseColor("#FF0055")
-            bpm >= 130 -> Color.parseColor("#EF4444")
-            bpm >= 100 -> Color.parseColor("#F59E0B")
-            else -> Color.parseColor("#00F0FF")
-        }
-        invalidate()
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        val w = width.toFloat()
-        val h = height.toFloat()
-        if (w <= 0 || h <= 0) return
-
-        val s = minOf(w, h) / 48f
-        val cx = w / 2f
-        val cy = h / 2f
-
-        glyphPath.reset()
-        // Stylized electric lightning bolt + pulse waveform
-        glyphPath.moveTo(cx - 20f * s, cy)
-        glyphPath.lineTo(cx - 13f * s, cy)
-        glyphPath.lineTo(cx - 8f * s, cy - 6f * s)
-        glyphPath.lineTo(cx - 3f * s, cy + 8f * s)
-        glyphPath.lineTo(cx + 3f * s, cy - 18f * s) // High electric spike
-        glyphPath.lineTo(cx + 8f * s, cy + 16f * s) // Deep spike
-        glyphPath.lineTo(cx + 13f * s, cy - 6f * s)
-        glyphPath.lineTo(cx + 16f * s, cy)
-        glyphPath.lineTo(cx + 20f * s, cy)
-
-        val glowAlpha = if (isClutch) 140 else 90
-        val r = Color.red(activeColor)
-        val g = Color.green(activeColor)
-        val b = Color.blue(activeColor)
-        val glowColor = Color.argb(glowAlpha, r, g, b)
-
-        // 1. Neon Glow Stroke Underlay
-        strokeGlowPaint.color = glowColor
-        strokeGlowPaint.strokeWidth = s * 5.5f
-        canvas.drawPath(glyphPath, strokeGlowPaint)
-
-        // 2. Crisp Foreground Neon Beam Line
-        strokePaint.color = activeColor
-        strokePaint.strokeWidth = s * 2.5f
-        canvas.drawPath(glyphPath, strokePaint)
-
-        // 3. Electric spark node at highest peak
-        val peakX = cx + 3f * s
-        val peakY = cy - 18f * s
-        canvas.drawCircle(peakX, peakY, s * 2.2f, sparkPaint)
-    }
-}
-
-/**
- * Custom live & session heart rate chart view with:
- * - Time range filtering (60s, 5m, 10m, 30m, 1h, All)
- * - Pinch-to-zoom (up to 25x) and horizontal panning gestures
- * - Interactive scrubber / touch inspection
- * - Vibrant dual-layer neon beam stroke & high-contrast gradient fill
- */
-
-/**
- * Smooth ambient radial glow underlay for the heart rate value.
- * Dynamically computes safe radius to ensure the gradient reaches 100% transparency (0 alpha)
- * well within the card boundaries, completely preventing rectangular bounding-box clipping.
- */
-class SmoothAmbientGlowView @JvmOverloads constructor(
-    context: Context,
-    attrs: AttributeSet? = null,
-    defStyleAttr: Int = 0
-) : View(context, attrs, defStyleAttr) {
-
-    private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        isDither = true
-    }
-
-    private var activeColor: Int = Color.parseColor("#9333EA")
-    private var isClutch: Boolean = false
-    private var hasBpm: Boolean = false
-
-    fun updateGlow(clutch: Boolean, bpm: Int) {
-        isClutch = clutch
-        hasBpm = bpm > 0
-        activeColor = when {
-            bpm <= 0 -> Color.parseColor("#4A2574")
-            clutch -> Color.parseColor("#FF0055")
-            bpm >= 130 -> Color.parseColor("#EF4444")
-            bpm >= 100 -> Color.parseColor("#F59E0B")
-            else -> Color.parseColor("#9333EA")
-        }
-        invalidate()
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        val w = width.toFloat()
-        val h = height.toFloat()
-        if (w <= 0f || h <= 0f) return
-
-        val cx = w / 2f
-        val cy = h * 0.40f
-
-        // Safe radius strictly inside bounds, never touching card edges
-        val safeRadius = minOf(w * 0.38f, cy * 0.80f, (h - cy) * 0.80f).coerceAtLeast(dpToPx(35f))
-
-        val r = Color.red(activeColor)
-        val g = Color.green(activeColor)
-        val b = Color.blue(activeColor)
-
-        val centerAlpha = when {
-            isClutch -> 150
-            hasBpm -> 110
-            else -> 40
-        }
-
-        val colors = intArrayOf(
-            Color.argb(centerAlpha, r, g, b),
-            Color.argb((centerAlpha * 0.52f).toInt(), r, g, b),
-            Color.argb((centerAlpha * 0.16f).toInt(), r, g, b),
-            Color.argb(0, r, g, b)
-        )
-        val stops = floatArrayOf(0f, 0.38f, 0.72f, 1f)
-
-        glowPaint.shader = RadialGradient(
-            cx, cy, safeRadius,
-            colors, stops,
-            Shader.TileMode.CLAMP
-        )
-
-        canvas.drawCircle(cx, cy, safeRadius, glowPaint)
-    }
-
-    private fun dpToPx(dp: Float): Float = dp * resources.displayMetrics.density
-}
 
 class HrChartView @JvmOverloads constructor(
     context: Context,
@@ -706,8 +537,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnLangToggle: TextView
 
     private lateinit var heroCard: FrameLayout
-    private lateinit var heroGlowAura: SmoothAmbientGlowView
-    private lateinit var pulseGlyph: PulseGlyphView
+        private lateinit var pulseGlyph: PulseGlyphView
     private lateinit var tvBpm: TextView
     private lateinit var tvBpmLabel: TextView
 
@@ -856,11 +686,21 @@ class MainActivity : AppCompatActivity() {
         val savedLangCode = prefs.getString(KEY_LANG, Lang.EN.code) ?: Lang.EN.code
         currentLang = if (savedLangCode == Lang.RU.code) Lang.RU else Lang.EN
 
+        val mainScrollView = ScrollView(this).apply {
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            background = makeGradientDrawable(
+                intArrayOf(Color.parseColor("#0E071A"), Color.parseColor("#05020B")),
+                radius = 0f,
+                orientation = GradientDrawable.Orientation.TOP_BOTTOM
+            )
+        }
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#050811"))
-            setPadding(dp(16), dp(16), dp(16), dp(12))
+            setPadding(dp(16), dp(14), dp(16), dp(24))
         }
+        mainScrollView.addView(root)
 
         // ==========================================
         // 1. HEADER (Title with Neon Accent + Subtitle + Lang + Status Pill)
@@ -952,13 +792,7 @@ class MainActivity : AppCompatActivity() {
             ).apply { bottomMargin = dp(12) }
         }
 
-        heroGlowAura = SmoothAmbientGlowView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        }
-        heroCard.addView(heroGlowAura)
+
 
         val heroCardContent = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1037,6 +871,103 @@ class MainActivity : AppCompatActivity() {
         heroCardContent.addView(telemetryBar)
         heroCard.addView(heroCardContent)
         root.addView(heroCard)
+
+        // ==========================================
+        // 4. ACTION BUTTONS & CONTROLS
+        // ==========================================
+        btnToggle = Button(this).apply {
+            text = AppStrings.get("btn_start", currentLang)
+            textSize = 14.5f
+            letterSpacing = 0.05f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            background = makeGradientButtonDrawable(
+                colors = intArrayOf(Color.parseColor("#9333EA"), Color.parseColor("#6366F1")),
+                pressedColors = intArrayOf(Color.parseColor("#7E22CE"), Color.parseColor("#4F46E5")),
+                radius = dp(14).toFloat(),
+                strokeColor = Color.parseColor("#C084FC"),
+                strokeWidth = dp(1)
+            )
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(48)
+            ).apply { bottomMargin = dp(8) }
+
+            setOnClickListener {
+                if (!isRunning) {
+                    checkPermsAndStart()
+                } else {
+                    stopBridgeService()
+                }
+            }
+        }
+        root.addView(btnToggle)
+
+        val actionRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(10) }
+        }
+
+        btnHideLogs = Button(this).apply {
+            text = AppStrings.get("btn_hide_logs", currentLang)
+            textSize = 11f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#94A3B8"))
+            background = makeToolbarButtonDrawable()
+            layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(5) }
+            setOnClickListener {
+                toggleLogsVisibility()
+            }
+        }
+
+        btnHistory = Button(this).apply {
+            text = AppStrings.get("btn_history", currentLang)
+            textSize = 11f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#C084FC"))
+            background = makeToolbarButtonDrawable()
+            layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(5) }
+            setOnClickListener {
+                showHistoryDialog()
+            }
+        }
+
+        btnCopy = Button(this).apply {
+            text = AppStrings.get("btn_copy", currentLang)
+            textSize = 11f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#60A5FA"))
+            background = makeToolbarButtonDrawable()
+            layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(5) }
+            setOnClickListener {
+                copyAndUploadLogs()
+            }
+        }
+
+        btnClear = Button(this).apply {
+            text = AppStrings.get("btn_clear", currentLang)
+            textSize = 11f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#64748B"))
+            background = makeToolbarButtonDrawable()
+            layoutParams = LinearLayout.LayoutParams(0, dp(40), 0.9f)
+            setOnClickListener {
+                tvLogs.text = ""
+                resetCurrentStats()
+                Toast.makeText(this@MainActivity, AppStrings.get("toast_cleared", currentLang), Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        actionRow.addView(btnHideLogs)
+        actionRow.addView(btnHistory)
+        actionRow.addView(btnCopy)
+        actionRow.addView(btnClear)
+        root.addView(actionRow)
+
+        
 
         // ==========================================
         // 3. GRAPH CARD (Time Range Pills + Zoom Reset + Oscilloscope Chart)
@@ -1177,102 +1108,7 @@ class MainActivity : AppCompatActivity() {
         updateRangePillsUI()
         root.addView(graphCard)
 
-        // ==========================================
-        // 4. ACTION BUTTONS & CONTROLS
-        // ==========================================
-        btnToggle = Button(this).apply {
-            text = AppStrings.get("btn_start", currentLang)
-            textSize = 14.5f
-            letterSpacing = 0.05f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            background = makeGradientButtonDrawable(
-                colors = intArrayOf(Color.parseColor("#9333EA"), Color.parseColor("#6366F1")),
-                pressedColors = intArrayOf(Color.parseColor("#7E22CE"), Color.parseColor("#4F46E5")),
-                radius = dp(14).toFloat(),
-                strokeColor = Color.parseColor("#C084FC"),
-                strokeWidth = dp(1)
-            )
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(48)
-            ).apply { bottomMargin = dp(8) }
-
-            setOnClickListener {
-                if (!isRunning) {
-                    checkPermsAndStart()
-                } else {
-                    stopBridgeService()
-                }
-            }
-        }
-        root.addView(btnToggle)
-
-        val actionRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(10) }
-        }
-
-        btnHideLogs = Button(this).apply {
-            text = AppStrings.get("btn_hide_logs", currentLang)
-            textSize = 11f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#94A3B8"))
-            background = makeToolbarButtonDrawable()
-            layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(5) }
-            setOnClickListener {
-                toggleLogsVisibility()
-            }
-        }
-
-        btnHistory = Button(this).apply {
-            text = AppStrings.get("btn_history", currentLang)
-            textSize = 11f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#C084FC"))
-            background = makeToolbarButtonDrawable()
-            layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(5) }
-            setOnClickListener {
-                showHistoryDialog()
-            }
-        }
-
-        btnCopy = Button(this).apply {
-            text = AppStrings.get("btn_copy", currentLang)
-            textSize = 11f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#60A5FA"))
-            background = makeToolbarButtonDrawable()
-            layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(5) }
-            setOnClickListener {
-                copyAndUploadLogs()
-            }
-        }
-
-        btnClear = Button(this).apply {
-            text = AppStrings.get("btn_clear", currentLang)
-            textSize = 11f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#64748B"))
-            background = makeToolbarButtonDrawable()
-            layoutParams = LinearLayout.LayoutParams(0, dp(40), 0.9f)
-            setOnClickListener {
-                tvLogs.text = ""
-                resetCurrentStats()
-                Toast.makeText(this@MainActivity, AppStrings.get("toast_cleared", currentLang), Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        actionRow.addView(btnHideLogs)
-        actionRow.addView(btnHistory)
-        actionRow.addView(btnCopy)
-        actionRow.addView(btnClear)
-        root.addView(actionRow)
-
-        // ==========================================
+// ==========================================
         // 5. LIVE CONSOLE / LOGS CARD (Collapsible)
         // ==========================================
         consoleHeader = LinearLayout(this).apply {
@@ -1333,7 +1169,7 @@ class MainActivity : AppCompatActivity() {
         consoleCard.addView(scrollView)
         root.addView(consoleCard)
 
-        setContentView(root)
+        setContentView(mainScrollView)
 
         val filter = IntentFilter().apply {
             addAction("com.pulsebridge.LOG")
@@ -1753,7 +1589,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateHeroGlow(isClutch: Boolean, bpm: Int) {
         heroCard.background = makeHeroCardDrawable(isClutch)
-        heroGlowAura.updateGlow(isClutch, bpm)
     }
 
     private fun startPulseGlyphAnimation(bpm: Int) {
@@ -1782,19 +1617,22 @@ class MainActivity : AppCompatActivity() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
+            setPadding(dp(6), dp(4), dp(6), dp(4))
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         val tvVal = TextView(this).apply {
             text = initialVal
-            textSize = 14f
+            textSize = 14.5f
             setTypeface(null, Typeface.BOLD)
             setTextColor(valColor)
+            gravity = Gravity.CENTER
         }
         val tvLbl = TextView(this).apply {
             text = AppStrings.get(labelKey, currentLang)
             textSize = 9f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#5A6E8C"))
+            setTextColor(Color.parseColor("#8E7FA8"))
+            gravity = Gravity.CENTER
         }
         box.addView(tvVal)
         box.addView(tvLbl)
@@ -1803,8 +1641,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun createVerticalDivider(): View {
         return View(this).apply {
-            setBackgroundColor(Color.parseColor("#152033"))
-            layoutParams = LinearLayout.LayoutParams(dp(1), dp(22))
+            setBackgroundColor(Color.parseColor("#381F54"))
+            layoutParams = LinearLayout.LayoutParams(dp(1), dp(20)).apply {
+                leftMargin = dp(8)
+                rightMargin = dp(8)
+            }
         }
     }
 
