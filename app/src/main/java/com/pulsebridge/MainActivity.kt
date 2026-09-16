@@ -195,9 +195,9 @@ class PulseGlyphView @JvmOverloads constructor(
         activeColor = when {
             bpm <= 0 -> Color.parseColor("#4A2574")
             clutch -> Color.parseColor("#FF0055")
-            bpm >= 130 -> Color.parseColor("#EF4444")
-            bpm >= 100 -> Color.parseColor("#F59E0B")
-            else -> Color.parseColor("#A855F7")
+            bpm >= 135 -> Color.parseColor("#EF4444")
+            bpm >= 110 -> Color.parseColor("#F59E0B")
+            else -> Color.parseColor("#10B981")
         }
         invalidate()
     }
@@ -923,7 +923,7 @@ class MainActivity : AppCompatActivity() {
 
     private var glyphAnimator: ObjectAnimator? = null
     private var isRunning = false
-    private var isLogsVisible = true
+    private var isLogsVisible = false
     private var lastRawStatus: String = "Остановлено"
 
     // Session Statistics
@@ -940,7 +940,8 @@ class MainActivity : AppCompatActivity() {
                 "com.pulsebridge.LOG" -> {
                     val msg = intent.getStringExtra("msg") ?: return
                     val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-                    tvLogs.append("[$time] $msg\n")
+                    val displayMsg = if (currentLang == Lang.EN) translateLog(msg) else msg
+                    tvLogs.append("[$time] $displayMsg\n")
                     if (isLogsVisible) {
                         scrollView.post { scrollView.fullScroll(ScrollView.FOCUS_DOWN) }
                     }
@@ -955,7 +956,7 @@ class MainActivity : AppCompatActivity() {
                     if (bpm > 0) {
                         tvBpm.text = bpm.toString()
 
-                        // Color zones and Clutch >= 160 with cyber glow
+                        // Color zones: <110 Green, 110-134 Orange, 135-159 Red, 160+ Clutch
                         when {
                             bpm >= 160 -> {
                                 tvBpm.setTextColor(Color.parseColor("#FF0055"))
@@ -964,14 +965,14 @@ class MainActivity : AppCompatActivity() {
                                 pulseGlyph.setStatus(true, bpm)
                                 updateHeroGlow(isClutch = true, bpm = bpm)
                             }
-                            bpm >= 130 -> {
+                            bpm >= 135 -> {
                                 tvBpm.setTextColor(Color.parseColor("#EF4444"))
                                 tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
                                 tvBpmLabel.setTextColor(Color.parseColor("#64748B"))
                                 pulseGlyph.setStatus(false, bpm)
                                 updateHeroGlow(isClutch = false, bpm = bpm)
                             }
-                            bpm >= 100 -> {
+                            bpm >= 110 -> {
                                 tvBpm.setTextColor(Color.parseColor("#F59E0B"))
                                 tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
                                 tvBpmLabel.setTextColor(Color.parseColor("#64748B"))
@@ -1023,6 +1024,34 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun translateLog(raw: String): String {
+        return raw
+            .replace("Запуск фоновой службы PulseBridge...", "Starting PulseBridge background service...")
+            .replace("Служба остановлена", "Service stopped")
+            .replace("Сканирование BLE устройств (пульсометры)...", "Scanning for BLE devices...")
+            .replace("Сканирование остановлено", "Scan stopped")
+            .replace("Найдено устройство:", "Found device:")
+            .replace("Подключение к", "Connecting to")
+            .replace("Подключено к", "Connected to")
+            .replace("Отключено от", "Disconnected from")
+            .replace("Поиск сервисов GATT...", "Discovering GATT services...")
+            .replace("Сервисы обнаружены", "Services discovered")
+            .replace("Найден сервис Heart Rate!", "Heart Rate service found!")
+            .replace("Подписка на уведомления пульса...", "Subscribing to heart rate notifications...")
+            .replace("Успешная подписка на пульс!", "Heart rate subscription successful!")
+            .replace("Авторизация в Xiaomi...", "Authorizing with Xiaomi protocol...")
+            .replace("Авторизовано успешно", "Authorization successful")
+            .replace("Ошибка авторизации", "Authorization error")
+            .replace("Ошибка подключения", "Connection error")
+            .replace("Ошибка GATT", "GATT error")
+            .replace("Bluetooth адаптер выключен", "Bluetooth adapter is turned OFF")
+            .replace("Нет разрешения на Bluetooth", "Bluetooth permission not granted")
+            .replace("Трансляция пульса:", "Heart rate streaming:")
+            .replace("Заряд батареи:", "Battery level:")
+            .replace("Опрос датчиков...", "Polling sensors...")
+            .replace("Пульс:", "Heart rate:")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -1249,10 +1278,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnHideLogs = Button(this).apply {
-            text = AppStrings.get("btn_hide_logs", currentLang)
+            text = if (isLogsVisible) AppStrings.get("btn_hide_logs", currentLang) else AppStrings.get("btn_show_logs", currentLang)
             textSize = 11f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#94A3B8"))
+            setTextColor(if (isLogsVisible) Color.parseColor("#94A3B8") else Color.parseColor("#A855F7"))
             background = makeToolbarButtonDrawable()
             layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(5) }
             setOnClickListener {
@@ -1452,6 +1481,7 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), 0, dp(4), dp(4))
+            visibility = if (isLogsVisible) View.VISIBLE else View.GONE
         }
 
         tvConsoleTitle = TextView(this).apply {
@@ -1485,6 +1515,7 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
             )
+            visibility = if (isLogsVisible) View.VISIBLE else View.GONE
         }
 
         scrollView = ScrollView(this).apply {
