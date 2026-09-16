@@ -155,21 +155,18 @@ object AppStrings {
 }
 
 /**
- * Custom vector cyberpunk heart view with dynamic neon glow bloom
- * and real-time beat pulse animation (zero emoji dependencies).
+ * Custom vector cyberpunk electric pulse wave glyph with dynamic neon glow bloom
+ * and real-time beat pulse animation (zero hearts, zero emoji).
  */
-class CyberHeartView @JvmOverloads constructor(
+class PulseGlyphView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
     private var isClutch = false
-    private val heartPath = Path()
-
-    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-    }
+    private var activeColor = Color.parseColor("#00F0FF")
+    private val glyphPath = Path()
 
     private val strokeGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -183,11 +180,21 @@ class CyberHeartView @JvmOverloads constructor(
         strokeJoin = Paint.Join.ROUND
     }
 
-    fun setClutch(clutch: Boolean) {
-        if (isClutch != clutch) {
-            isClutch = clutch
-            invalidate()
+    private val sparkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.WHITE
+    }
+
+    fun setStatus(clutch: Boolean, bpm: Int) {
+        isClutch = clutch
+        activeColor = when {
+            bpm <= 0 -> Color.parseColor("#4A5C78")
+            clutch -> Color.parseColor("#FF0055")
+            bpm >= 130 -> Color.parseColor("#EF4444")
+            bpm >= 100 -> Color.parseColor("#F59E0B")
+            else -> Color.parseColor("#00F0FF")
         }
+        invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -196,36 +203,42 @@ class CyberHeartView @JvmOverloads constructor(
         val h = height.toFloat()
         if (w <= 0 || h <= 0) return
 
+        val s = minOf(w, h) / 48f
         val cx = w / 2f
         val cy = h / 2f
-        val s = minOf(w, h) / 36f
 
-        heartPath.reset()
-        // Precise parametric/bezier vector heart
-        heartPath.moveTo(cx, cy + 9f * s)
-        heartPath.cubicTo(cx - 13f * s, cy - 2f * s, cx - 15f * s, cy - 13f * s, cx - 7f * s, cy - 13f * s)
-        heartPath.cubicTo(cx - 2f * s, cy - 13f * s, cx, cy - 8f * s, cx, cy - 6f * s)
-        heartPath.cubicTo(cx, cy - 8f * s, cx + 2f * s, cy - 13f * s, cx + 7f * s, cy - 13f * s)
-        heartPath.cubicTo(cx + 15f * s, cy - 13f * s, cx + 13f * s, cy - 2f * s, cx, cy + 9f * s)
-        heartPath.close()
+        glyphPath.reset()
+        // Stylized electric lightning bolt + pulse waveform
+        glyphPath.moveTo(cx - 20f * s, cy)
+        glyphPath.lineTo(cx - 13f * s, cy)
+        glyphPath.lineTo(cx - 8f * s, cy - 6f * s)
+        glyphPath.lineTo(cx - 3f * s, cy + 8f * s)
+        glyphPath.lineTo(cx + 3f * s, cy - 18f * s) // High electric spike
+        glyphPath.lineTo(cx + 8f * s, cy + 16f * s) // Deep spike
+        glyphPath.lineTo(cx + 13f * s, cy - 6f * s)
+        glyphPath.lineTo(cx + 16f * s, cy)
+        glyphPath.lineTo(cx + 20f * s, cy)
 
-        val mainColor = if (isClutch) Color.parseColor("#FF0055") else Color.parseColor("#FF2D55")
-        val glowColor = if (isClutch) Color.argb(120, 255, 0, 85) else Color.argb(90, 255, 45, 85)
-        val fillColor = if (isClutch) Color.argb(60, 255, 0, 85) else Color.argb(40, 255, 45, 85)
+        val glowAlpha = if (isClutch) 140 else 90
+        val r = Color.red(activeColor)
+        val g = Color.green(activeColor)
+        val b = Color.blue(activeColor)
+        val glowColor = Color.argb(glowAlpha, r, g, b)
 
-        // 1. Subtle Fill
-        fillPaint.color = fillColor
-        canvas.drawPath(heartPath, fillPaint)
-
-        // 2. Neon Glow Stroke Underlay
+        // 1. Neon Glow Stroke Underlay
         strokeGlowPaint.color = glowColor
-        strokeGlowPaint.strokeWidth = s * 4.5f
-        canvas.drawPath(heartPath, strokeGlowPaint)
+        strokeGlowPaint.strokeWidth = s * 5.5f
+        canvas.drawPath(glyphPath, strokeGlowPaint)
 
-        // 3. Crisp Foreground Neon Line
-        strokePaint.color = mainColor
-        strokePaint.strokeWidth = s * 2.2f
-        canvas.drawPath(heartPath, strokePaint)
+        // 2. Crisp Foreground Neon Beam Line
+        strokePaint.color = activeColor
+        strokePaint.strokeWidth = s * 2.5f
+        canvas.drawPath(glyphPath, strokePaint)
+
+        // 3. Electric spark node at highest peak
+        val peakX = cx + 3f * s
+        val peakY = cy - 18f * s
+        canvas.drawCircle(peakX, peakY, s * 2.2f, sparkPaint)
     }
 }
 
@@ -619,7 +632,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var heroCard: FrameLayout
     private lateinit var heroGlowAura: View
-    private lateinit var cyberHeart: CyberHeartView
+    private lateinit var pulseGlyph: PulseGlyphView
     private lateinit var tvBpm: TextView
     private lateinit var tvBpmLabel: TextView
 
@@ -655,7 +668,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvLogs: TextView
     private lateinit var scrollView: ScrollView
 
-    private var heartAnimator: ObjectAnimator? = null
+    private var glyphAnimator: ObjectAnimator? = null
     private var isRunning = false
     private var isLogsVisible = true
     private var lastRawStatus: String = "Остановлено"
@@ -695,32 +708,32 @@ class MainActivity : AppCompatActivity() {
                                 tvBpm.setTextColor(Color.parseColor("#FF0055"))
                                 tvBpmLabel.text = AppStrings.get("clutch_label", currentLang)
                                 tvBpmLabel.setTextColor(Color.parseColor("#FF0055"))
-                                cyberHeart.setClutch(true)
+                                pulseGlyph.setStatus(true, bpm)
                                 updateHeroGlow(isClutch = true, bpm = bpm)
                             }
                             bpm >= 130 -> {
                                 tvBpm.setTextColor(Color.parseColor("#EF4444"))
                                 tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
                                 tvBpmLabel.setTextColor(Color.parseColor("#64748B"))
-                                cyberHeart.setClutch(false)
+                                pulseGlyph.setStatus(false, bpm)
                                 updateHeroGlow(isClutch = false, bpm = bpm)
                             }
                             bpm >= 100 -> {
                                 tvBpm.setTextColor(Color.parseColor("#F59E0B"))
                                 tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
                                 tvBpmLabel.setTextColor(Color.parseColor("#64748B"))
-                                cyberHeart.setClutch(false)
+                                pulseGlyph.setStatus(false, bpm)
                                 updateHeroGlow(isClutch = false, bpm = bpm)
                             }
                             else -> {
                                 tvBpm.setTextColor(Color.parseColor("#10B981"))
                                 tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
                                 tvBpmLabel.setTextColor(Color.parseColor("#64748B"))
-                                cyberHeart.setClutch(false)
+                                pulseGlyph.setStatus(false, bpm)
                                 updateHeroGlow(isClutch = false, bpm = bpm)
                             }
                         }
-                        startHeartPulseAnimation(bpm)
+                        startPulseGlyphAnimation(bpm)
 
                         if (!hrChartView.isHistorical()) {
                             if (minBpm == 0 || bpm < minBpm) minBpm = bpm
@@ -740,9 +753,9 @@ class MainActivity : AppCompatActivity() {
                         tvBpm.setTextColor(Color.parseColor("#4A5C78"))
                         tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
                         tvBpmLabel.setTextColor(Color.parseColor("#64748B"))
-                        cyberHeart.setClutch(false)
+                        pulseGlyph.setStatus(false, 0)
                         updateHeroGlow(isClutch = false, bpm = 0)
-                        stopHeartPulseAnimation()
+                        stopPulseGlyphAnimation()
                     }
                 }
                 "com.pulsebridge.BATTERY" -> {
@@ -814,8 +827,8 @@ class MainActivity : AppCompatActivity() {
             text = "GD HUD"
             textSize = 8.5f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#FF0055"))
-            background = makeDrawable(Color.parseColor("#1A0A16"), radius = dp(6).toFloat(), strokeColor = Color.parseColor("#FF0055"), strokeWidth = dp(1))
+            setTextColor(Color.parseColor("#00F0FF"))
+            background = makeDrawable(Color.parseColor("#09182A"), radius = dp(6).toFloat(), strokeColor = Color.parseColor("#00F0FF"), strokeWidth = dp(1))
             setPadding(dp(5), dp(2), dp(5), dp(2))
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -868,7 +881,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(headerRow)
 
         // ==========================================
-        // 2. HERO CARD (Heart Rate, Authentic Cyber Glow Aura & Unified Telemetry Bar)
+        // 2. HERO CARD (Electric Pulse Glyph & Unified Telemetry Bar)
         // ==========================================
         heroCard = FrameLayout(this).apply {
             background = makeHeroCardDrawable(isClutch = false)
@@ -894,8 +907,8 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        cyberHeart = CyberHeartView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).apply {
+        pulseGlyph = PulseGlyphView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply {
                 bottomMargin = dp(4)
             }
         }
@@ -955,7 +968,7 @@ class MainActivity : AppCompatActivity() {
         telemetryBar.addView(createVerticalDivider())
         telemetryBar.addView(batBadge.third)
 
-        heroCardContent.addView(cyberHeart)
+        heroCardContent.addView(pulseGlyph)
         heroCardContent.addView(tvBpm)
         heroCardContent.addView(tvBpmLabel)
         heroCardContent.addView(telemetryBar)
@@ -1130,7 +1143,6 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(btnToggle)
 
-        // Sub-buttons Toolbar: [ 👁 HIDE/SHOW LOGS ] [ 📜 HISTORY ] [ 📋 SYNC ] [ 🗑 CLEAR ]
         val actionRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
@@ -1273,13 +1285,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        stopHeartPulseAnimation()
+        stopPulseGlyphAnimation()
         unregisterReceiver(receiver)
     }
 
-    // ==========================================
-    // LANGUAGE & LOCALIZATION
-    // ==========================================
     private fun toggleLanguage() {
         currentLang = if (currentLang == Lang.EN) Lang.RU else Lang.EN
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -1322,9 +1331,6 @@ class MainActivity : AppCompatActivity() {
         hrChartView.invalidate()
     }
 
-    // ==========================================
-    // TIME RANGE PILLS
-    // ==========================================
     private fun selectTimeRange(range: TimeRange) {
         if (hrChartView.isHistorical()) {
             closeHistoricalView()
@@ -1356,9 +1362,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ==========================================
-    // LOGS VISIBILITY TOGGLE
-    // ==========================================
     private fun toggleLogsVisibility() {
         isLogsVisible = !isLogsVisible
         if (isLogsVisible) {
@@ -1383,9 +1386,6 @@ class MainActivity : AppCompatActivity() {
         updateRangePillsUI()
     }
 
-    // ==========================================
-    // SESSION HISTORY PERSISTENCE & VIEWER
-    // ==========================================
     private fun saveCurrentSession() {
         val points = hrChartView.getSessionPoints()
         if (points.size < 5) return
@@ -1623,9 +1623,6 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    // ==========================================
-    // ACTIONS & CONTROLS
-    // ==========================================
     private fun copyAndUploadLogs() {
         val logsText = tvLogs.text.toString()
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -1694,14 +1691,14 @@ class MainActivity : AppCompatActivity() {
         heroGlowAura.background = makeGlowAuraDrawable(isClutch, bpm > 0)
     }
 
-    private fun startHeartPulseAnimation(bpm: Int) {
+    private fun startPulseGlyphAnimation(bpm: Int) {
         val durationMs = (Math.max(0.25, Math.min(2.0, 60.0 / bpm)) * 1000).toLong()
-        if (heartAnimator != null && heartAnimator?.duration == durationMs) return
-        heartAnimator?.cancel()
-        heartAnimator = ObjectAnimator.ofPropertyValuesHolder(
-            cyberHeart,
-            PropertyValuesHolder.ofFloat("scaleX", 1f, 1.25f, 1f),
-            PropertyValuesHolder.ofFloat("scaleY", 1f, 1.25f, 1f)
+        if (glyphAnimator != null && glyphAnimator?.duration == durationMs) return
+        glyphAnimator?.cancel()
+        glyphAnimator = ObjectAnimator.ofPropertyValuesHolder(
+            pulseGlyph,
+            PropertyValuesHolder.ofFloat("scaleX", 1f, 1.22f, 1f),
+            PropertyValuesHolder.ofFloat("scaleY", 1f, 1.22f, 1f)
         ).apply {
             duration = durationMs
             repeatCount = ValueAnimator.INFINITE
@@ -1709,11 +1706,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun stopHeartPulseAnimation() {
-        heartAnimator?.cancel()
-        heartAnimator = null
-        cyberHeart.scaleX = 1f
-        cyberHeart.scaleY = 1f
+    private fun stopPulseGlyphAnimation() {
+        glyphAnimator?.cancel()
+        glyphAnimator = null
+        pulseGlyph.scaleX = 1f
+        pulseGlyph.scaleY = 1f
     }
 
     private fun createMetricSegment(labelKey: String, initialVal: String, valColor: Int): Triple<TextView, TextView, LinearLayout> {
@@ -1804,9 +1801,9 @@ class MainActivity : AppCompatActivity() {
         tvBpm.setTextColor(Color.parseColor("#4A5C78"))
         tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
         tvBpmLabel.setTextColor(Color.parseColor("#5A6E8C"))
-        cyberHeart.setClutch(false)
+        pulseGlyph.setStatus(false, 0)
         updateHeroGlow(isClutch = false, bpm = 0)
-        stopHeartPulseAnimation()
+        stopPulseGlyphAnimation()
     }
 
     private fun dp(value: Int): Int {
@@ -1860,8 +1857,8 @@ class MainActivity : AppCompatActivity() {
                 ))
             } else {
                 setColors(intArrayOf(
-                    Color.argb(95, 255, 45, 85),
-                    Color.argb(32, 255, 45, 85),
+                    Color.argb(95, 0, 240, 255),
+                    Color.argb(32, 0, 240, 255),
                     Color.TRANSPARENT
                 ))
             }
