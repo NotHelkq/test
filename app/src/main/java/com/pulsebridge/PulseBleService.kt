@@ -7,6 +7,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
@@ -79,7 +81,8 @@ class PulseBleService : Service() {
 
     private var lastRecordedBpm = 0
     private var lastRecordedSteps = 0
-    private var lastBatteryLevel = 0
+    private var lastBatteryLevel = -1
+    private var sessionStartTimeMs = 0L
 
     private var rawSensorBatchesSinceAck = 0
     private var rawSensorAckCounter = 0
@@ -88,12 +91,18 @@ class PulseBleService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == "ACTION_STOP_SERVICE") {
+            sendLog("Остановка сервиса по нажатию кнопки в уведомлении")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        if (sessionStartTimeMs == 0L) {
+            sessionStartTimeMs = System.currentTimeMillis()
+        }
+
         createNotificationChannel()
-        val notification = NotificationCompat.Builder(this, "pulse_channel")
-            .setContentTitle("PulseBridge")
-            .setContentText("Подключение к $TARGET_MAC...")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .build()
+        val notification = buildServiceNotification(lastRecordedBpm, lastBatteryLevel)
         startForeground(1, notification)
 
         sendLog("Запуск сервиса Band 9 Active. Цель: $TARGET_MAC")
@@ -105,6 +114,7 @@ class PulseBleService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        sessionStartTimeMs = 0L
         pingJob?.cancel()
         txTimeoutJob?.cancel()
         stopHeartRateStream()
@@ -133,6 +143,7 @@ class PulseBleService : Service() {
     private fun sendBatteryUpdate(level: Int) {
         lastBatteryLevel = level
         sendBroadcast(Intent("com.pulsebridge.BATTERY").apply { putExtra("level", level) })
+        updateNotification(lastRecordedBpm)
     }
 
     private fun connectDirect() {
@@ -747,7 +758,7 @@ class PulseBleService : Service() {
         sendLog("❤️ [$source] Пульс: $bpm BPM" + if (lastRecordedSteps > 0) " | Шаги: $lastRecordedSteps" else "")
         sendState("Трансляция ($bpm BPM)")
         sendBpmUpdate(bpm)
-        updateNotification(bpm, lastRecordedSteps)
+        updateNotification(bpm)
         sendPulseToServer(bpm)
     }
 
@@ -964,13 +975,72 @@ class PulseBleService : Service() {
         }
     }
 
-    private fun updateNotification(bpm: Int, steps: Int) {
-        val notification = NotificationCompat.Builder(this, "pulse_channel")
-            .setContentTitle("PulseBridge: $bpm BPM")
-            .setContentText("OBS онлайн" + if (steps > 0) " | Шагов: $steps" else "")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+    private fun buildServiceNotification(bpm: Int, battery: Int): Notification {
+        val openAppIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val openAppPendingIntent = PendingIntent.getActivity(
+            this, 0, openAppIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+        )
+
+        val stopIntent = Intent(this, PulseBleService::class.java).apply {
+            action = "ACTION_STOP_SERVICE"
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this, 1, stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+        )
+
+        val title = when {
+            bpm >= 160 -> "🔥 $bpm BPM • CLUTCH MODE"
+            bpm > 0 -> "⚡ $bpm BPM • PulseBridge"
+            else -> "⚡ PulseBridge • Подключение..."
+        }
+
+        val batStr = if (battery >= 0) "🔋 $battery%" else "🔋 --%"
+        val contentText = "$batStr  •  📡 OBS Онлайн"
+
+        val bigText = StringBuilder()
+        if (bpm > 0) {
+            bigText.append("💓 Текущий пульс: $bpm BPM")
+            if (bpm >= 160) bigText.append(" (КЛАТЧ РЕЖИМ 🔥)")
+            bigText.append("\n")
+        } else {
+            bigText.append("💓 Ожидание сигнала пульса...\n")
+        }
+        if (battery >= 0) {
+            bigText.append("🔋 Заряд браслета: $battery%\n")
+        }
+        bigText.append("⏱️ Таймер сессии идет в заголовке\n")
+        bigText.append("📡 Телеметрия передается в OBS онлайн")
+
+        val builder = NotificationCompat.Builder(this, "pulse_channel")
+            .setContentTitle(title)
+            .setContentText(contentText)
+            .setSubText("Live Telemetry")
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setColor(Color.parseColor("#9333EA"))
+            .setContentIntent(openAppPendingIntent)
             .setOngoing(true)
-            .build()
+            .setShowWhen(true)
+            .setUsesChronometer(true)
+            .setWhen(if (sessionStartTimeMs > 0L) sessionStartTimeMs else System.currentTimeMillis())
+            .setStyle(NotificationCompat.BigTextStyle().bigText(bigText.toString()))
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "⏹ ОСТАНОВИТЬ", stopPendingIntent)
+
+        try {
+            val largeIcon = BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher)
+            if (largeIcon != null) {
+                builder.setLargeIcon(largeIcon)
+            }
+        } catch (_: Exception) {}
+
+        return builder.build()
+    }
+
+    private fun updateNotification(bpm: Int) {
+        val notification = buildServiceNotification(bpm, lastBatteryLevel)
         val manager = getSystemService(NotificationManager::class.java)
         manager?.notify(1, notification)
     }
