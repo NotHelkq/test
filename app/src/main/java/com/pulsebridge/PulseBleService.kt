@@ -59,9 +59,10 @@ class PulseBleService : Service() {
     private val rxBuffer = ByteArrayOutputStream()
     private val seqCounter = AtomicInteger(0)
 
-    // Очередь передачи (TX Queue) для предотвращения коллизий GATT write
+    // Очередь передачи (TX Queue)
     private val txQueue = LinkedList<ByteArray>()
     private var isTxBusy = false
+    private var txTimeoutJob: Job? = null
 
     private val secretKey = hexStringToByteArray(AUTH_KEY_HEX)
     private val phoneNonce = ByteArray(16)
@@ -101,6 +102,7 @@ class PulseBleService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         pingJob?.cancel()
+        txTimeoutJob?.cancel()
         stopHeartRateStream()
         bluetoothGatt?.close()
         bluetoothGatt = null
@@ -130,16 +132,25 @@ class PulseBleService : Service() {
     }
 
     private fun connectDirect() {
-        val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
-        if (adapter == null || !adapter.isEnabled) {
-            sendLog("ОШИБКА: Bluetooth выключен!")
-            sendState("Bluetooth выключен!")
-            return
-        }
+        try {
+            val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+            if (adapter == null) {
+                sendLog("ОШИБКА: Bluetooth адаптер не найден!")
+                sendState("Bluetooth не поддерживается")
+                return
+            }
+            if (!adapter.isEnabled) {
+                sendLog("ОШИБКА: Bluetooth выключен!")
+                sendState("Bluetooth выключен!")
+                return
+            }
 
-        sendLog("Прямое подключение к $TARGET_MAC...")
-        val device = adapter.getRemoteDevice(TARGET_MAC)
-        bluetoothGatt = device.connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            sendLog("Прямое подключение к $TARGET_MAC...")
+            val device = adapter.getRemoteDevice(TARGET_MAC)
+            bluetoothGatt = device.connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+        } catch (e: Exception) {
+            sendLog("ОШИБКА подключения: ${e.message}")
+        }
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
@@ -211,6 +222,7 @@ class PulseBleService : Service() {
 
         override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
             synchronized(this@PulseBleService) {
+                txTimeoutJob?.cancel()
                 processNextTx(gatt)
             }
         }
@@ -256,6 +268,7 @@ class PulseBleService : Service() {
 
     private fun resetState() {
         pingJob?.cancel()
+        txTimeoutJob?.cancel()
         rxBuffer.reset()
         seqCounter.set(0)
         synchronized(this) {
@@ -281,6 +294,7 @@ class PulseBleService : Service() {
 
     @Synchronized
     private fun processNextTx(gatt: BluetoothGatt) {
+        txTimeoutJob?.cancel()
         if (txQueue.isEmpty()) {
             isTxBusy = false
             return
@@ -307,8 +321,7 @@ class PulseBleService : Service() {
             gatt.writeCharacteristic(ch)
         }
 
-        // Защитный таймаут: если onCharacteristicWrite не вызвался в течение 350мс
-        scope.launch {
+        txTimeoutJob = scope.launch {
             delay(350)
             synchronized(this@PulseBleService) {
                 if (isTxBusy) {
@@ -437,10 +450,12 @@ class PulseBleService : Service() {
                 // SessionConfig
                 val opCode = if (payload.isNotEmpty()) payload[0].toInt() and 0xFF else -1
                 sendLog("<< [SessionConfig] OpCode: $opCode")
-                if (opCode == 2) {
+                sendAck(gatt, seq)
+
+                // Отправляем Nonce только один раз при первоначальном согласовании
+                if (opCode == 2 && !isSessionConfigured) {
                     isSessionConfigured = true
                     sendLog("Сессия согласована! Отправка Phone Nonce (Auth Шаг 1)...")
-                    sendAck(gatt, seq)
                     sendPhoneNonce(gatt)
                 }
             }
@@ -496,18 +511,23 @@ class PulseBleService : Service() {
     }
 
     private fun deriveKeysAndFinishAuth(gatt: BluetoothGatt, watchHmac: ByteArray) {
-        val step2Hmac = computeAuthStep3Hmac(secretKey, phoneNonce, watchNonce)
-        decryptionKey = step2Hmac.copyOfRange(0, 16)
-        encryptionKey = step2Hmac.copyOfRange(16, 32)
-        decryptionNonce = step2Hmac.copyOfRange(32, 36)
-        encryptionNonce = step2Hmac.copyOfRange(36, 40)
+        if (isAuthenticated) return // Уже авторизован
 
-        val expectedWatchHmac = hmacSha256(decryptionKey, watchNonce + phoneNonce)
+        val step2Hmac = computeAuthStep3Hmac(secretKey, phoneNonce, watchNonce)
+        val testDecKey = step2Hmac.copyOfRange(0, 16)
+        val expectedWatchHmac = hmacSha256(testDecKey, watchNonce + phoneNonce)
+
         if (!expectedWatchHmac.contentEquals(watchHmac)) {
             sendLog("ОШИБКА: HMAC браслета не совпал! Проверьте auth key.")
             sendState("Ошибка ключа Auth!")
             return
         }
+
+        // Присваиваем ключи только после успешной проверки HMAC!
+        decryptionKey = testDecKey
+        encryptionKey = step2Hmac.copyOfRange(16, 32)
+        decryptionNonce = step2Hmac.copyOfRange(32, 36)
+        encryptionNonce = step2Hmac.copyOfRange(36, 40)
 
         sendLog("HMAC часов подтвержден! Сессионные ключи получены.")
         sendLog(">> [Auth Шаг 3] Отправка AuthStep3...")
@@ -539,6 +559,7 @@ class PulseBleService : Service() {
         val subtype = cmd[2]?.asLong()?.toInt() ?: -1
 
         if (type == 1 && subtype == 26) {
+            if (isAuthenticated) return
             val authBytes = cmd[3]?.asBytes() ?: return
             val authFields = ProtoReader.parseFields(authBytes)
             val watchNonceBytes = authFields[31]?.asBytes() ?: return
@@ -567,8 +588,8 @@ class PulseBleService : Service() {
             return
         }
 
-        // Логируем все входящие команды Protobuf
-        sendLog("<< [Protobuf Ch 1] Cmd type=$type, subtype=$subtype (${data.size} B)")
+        // Логируем команду и ее расшифрованные байты
+        sendLog("<< [Protobuf Ch 1] Cmd type=$type, subtype=$subtype (${data.size} B): ${data.toHex()}")
 
         // Запрос батареи / статуса системы (type = 2)
         if (type == 2) {
@@ -632,7 +653,7 @@ class PulseBleService : Service() {
                 is ProtoReader.Value.Varint -> {
                     val v = value.v.toInt()
                     if (v in 45..220 && v != lastRecordedBpm) {
-                        // Возможный пульс
+                        // Потенциальный пульс
                     }
                 }
                 is ProtoReader.Value.LengthDelimited -> {
@@ -909,6 +930,7 @@ class PulseBleService : Service() {
             data class Varint(val v: Long) : Value()
             data class LengthDelimited(val bytes: ByteArray) : Value()
             data class Fixed32(val bytes: ByteArray) : Value()
+            data class Fixed64(val bytes: ByteArray) : Value()
 
             fun asLong(): Long? = (this as? Varint)?.v
             fun asBytes(): ByteArray? = (this as? LengthDelimited)?.bytes
@@ -928,6 +950,12 @@ class PulseBleService : Service() {
                         val (valLong, p) = readVarint(buf, pos) ?: break
                         pos = p
                         fields[fieldNum] = Value.Varint(valLong)
+                    }
+                    1 -> {
+                        if (pos + 8 > buf.size) break
+                        val data = buf.copyOfRange(pos, pos + 8)
+                        pos += 8
+                        fields[fieldNum] = Value.Fixed64(data)
                     }
                     2 -> {
                         val (len, p) = readVarint(buf, pos) ?: break
