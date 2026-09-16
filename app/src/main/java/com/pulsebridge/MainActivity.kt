@@ -25,6 +25,8 @@ import org.json.JSONObject
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.math.*
+
 
 enum class Lang(val code: String) {
     EN("en"),
@@ -265,11 +267,11 @@ class HrChartView @JvmOverloads constructor(
     private var inspectedBpm: Int? = null
     private var inspectedTimeMs: Long? = null
 
-    private val timeFormatAxis = SimpleDateFormat("HH:mm", Locale.getDefault())
+    private val timeFormatAxis = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
     private val timeFormatScrubber = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
 
     private val timestampPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = dpToPx(9.5f)
+        textSize = dpToPx(8.8f)
         typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
         color = Color.parseColor("#9D8FB8")
     }
@@ -456,23 +458,44 @@ class HrChartView @JvmOverloads constructor(
         val chartW = width - padL - padR
         if (chartW <= 0) return
 
-        val clampedX = touchX.coerceIn(padL, padL + chartW)
+        val (visibleList, visibleTimes) = getVisibleDataWithTimestamps()
+        if (visibleList.isEmpty()) return
+
+        val count = visibleList.size
+        val stepX = if (activeRange == TimeRange.SEC_60 && historicalPoints == null && zoomScale <= 1.05f) {
+            if (count < 60) chartW / 59f else chartW / (count - 1).toFloat()
+        } else {
+            if (count > 1) chartW / (count - 1).toFloat() else chartW
+        }
+
+        val maxDataX = padL + (count - 1) * stepX
+        val clampedX = touchX.coerceIn(padL, maxDataX)
         touchedX = clampedX
 
-        val (visibleList, visibleTimes) = getVisibleDataWithTimestamps()
-        if (visibleList.isNotEmpty()) {
-            val ratio = (clampedX - padL) / chartW
-            val index = (ratio * (visibleList.size - 1)).toInt().coerceIn(0, visibleList.size - 1)
-            inspectedBpm = visibleList[index]
-            inspectedTimeMs = if (index < visibleTimes.size) visibleTimes[index] else null
+        val index = if (stepX > 0f) {
+            ((clampedX - padL) / stepX).roundToInt().coerceIn(0, count - 1)
+        } else {
+            0
         }
+
+        inspectedBpm = visibleList[index]
+        inspectedTimeMs = if (index < visibleTimes.size) visibleTimes[index] else null
         postInvalidate()
     }
 
     private fun getVisibleDataWithTimestamps(): Pair<List<Int>, List<Long>> {
         val baseList = historicalPoints ?: allSessionPoints
-        val baseTime = historicalTimestamps ?: allSessionTimestamps
+        val rawTime = historicalTimestamps ?: allSessionTimestamps
         if (baseList.isEmpty()) return Pair(emptyList(), emptyList())
+
+        // Guarantee 1:1 timestamps for points
+        val baseTime = if (rawTime.size == baseList.size) {
+            rawTime
+        } else {
+            val now = System.currentTimeMillis()
+            val start = now - baseList.size * 1000L
+            baseList.indices.map { start + it * 1000L }
+        }
 
         val rangeCount = when (activeRange) {
             TimeRange.SEC_60 -> 60
@@ -491,7 +514,7 @@ class HrChartView @JvmOverloads constructor(
         }
 
         val rangeFiltered = baseList.drop(dropCount)
-        val timeFiltered = if (baseTime.size >= count) baseTime.drop(dropCount) else baseTime
+        val timeFiltered = baseTime.drop(dropCount)
 
         if (zoomScale <= 1.05f || rangeFiltered.size < 10) {
             return Pair(rangeFiltered, timeFiltered)
@@ -501,11 +524,7 @@ class HrChartView @JvmOverloads constructor(
         val maxStart = rangeFiltered.size - visibleSize
         val start = (panRatio * maxStart).toInt().coerceIn(0, maxStart)
         val subPoints = rangeFiltered.subList(start, start + visibleSize)
-        val subTimes = if (timeFiltered.size >= rangeFiltered.size) {
-            timeFiltered.subList(start, start + visibleSize)
-        } else {
-            emptyList()
-        }
+        val subTimes = timeFiltered.subList(start, start + visibleSize)
         return Pair(subPoints, subTimes)
     }
 
@@ -618,21 +637,44 @@ class HrChartView @JvmOverloads constructor(
             canvas.drawCircle(lastX, lastY, dpToPx(2.8f), dotPaint)
         }
 
-        // 5. Bottom X-Axis Timestamps
+        // 5. Bottom X-Axis Timestamps with exact seconds
         if (visibleTimes.size >= 2) {
-            val tStart = timeFormatAxis.format(Date(visibleTimes.first()))
-            val tMid = timeFormatAxis.format(Date(visibleTimes[visibleTimes.size / 2]))
-            val tEnd = timeFormatAxis.format(Date(visibleTimes.last()))
+            val numLabels = when {
+                chartW < dpToPx(240f) -> 2
+                chartW < dpToPx(340f) -> 3
+                else -> 4
+            }
+
+            val isGrowingSec60 = (activeRange == TimeRange.SEC_60 && historicalPoints == null && zoomScale <= 1.05f && count < 60)
+            val effectiveLabels = if (isGrowingSec60 && count < 8) 2 else numLabels
+
             val axisY = h - dpToPx(6f)
+            val tickTop = padT + chartH
+            val tickBottom = tickTop + dpToPx(3f)
 
-            timestampPaint.textAlign = Paint.Align.LEFT
-            canvas.drawText(tStart, padL, axisY, timestampPaint)
+            for (k in 0 until effectiveLabels) {
+                val idx = (k * (count - 1).toFloat() / (effectiveLabels - 1)).roundToInt().coerceIn(0, count - 1)
+                val posX = padL + idx * stepX
+                val timeMs = visibleTimes[idx]
+                val timeStr = timeFormatAxis.format(Date(timeMs))
 
-            timestampPaint.textAlign = Paint.Align.CENTER
-            canvas.drawText(tMid, padL + chartW / 2f, axisY, timestampPaint)
+                canvas.drawLine(posX, tickTop, posX, tickBottom, gridPaint)
 
-            timestampPaint.textAlign = Paint.Align.RIGHT
-            canvas.drawText(tEnd, padL + chartW, axisY, timestampPaint)
+                when (k) {
+                    0 -> {
+                        timestampPaint.textAlign = Paint.Align.LEFT
+                        canvas.drawText(timeStr, posX, axisY, timestampPaint)
+                    }
+                    effectiveLabels - 1 -> {
+                        timestampPaint.textAlign = Paint.Align.RIGHT
+                        canvas.drawText(timeStr, posX, axisY, timestampPaint)
+                    }
+                    else -> {
+                        timestampPaint.textAlign = Paint.Align.CENTER
+                        canvas.drawText(timeStr, posX, axisY, timestampPaint)
+                    }
+                }
+            }
         }
 
         // 6. Scrubber Tooltip when touched (shows BPM and exact timestamp)
@@ -642,7 +684,7 @@ class HrChartView @JvmOverloads constructor(
 
             val timeStr = if (inspectedTimeMs != null) " • " + timeFormatScrubber.format(Date(inspectedTimeMs!!)) else ""
             val badgeText = "$inspectedBpm BPM$timeStr"
-            val badgeW = if (timeStr.isNotEmpty()) dpToPx(136f) else dpToPx(74f)
+            val badgeW = if (timeStr.isNotEmpty()) dpToPx(148f) else dpToPx(74f)
             val badgeH = dpToPx(26f)
             val badgeX = (sx - badgeW / 2f).coerceIn(padL, padL + chartW - badgeW)
             val badgeY = padT + dpToPx(2f)

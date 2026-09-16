@@ -999,7 +999,7 @@ class PulseBleService : Service() {
         }
 
         val batStr = if (battery >= 0) "🔋 $battery%" else "🔋 --%"
-        val contentText = "$batStr  •  📡 OBS Онлайн"
+        val contentText = batStr
 
         val bigText = StringBuilder()
         if (bpm > 0) {
@@ -1012,8 +1012,7 @@ class PulseBleService : Service() {
         if (battery >= 0) {
             bigText.append("🔋 Заряд браслета: $battery%\n")
         }
-        bigText.append("⏱️ Таймер сессии идет в заголовке\n")
-        bigText.append("📡 Телеметрия передается в OBS онлайн")
+        bigText.append("⏱️ Время сессии отображается в строке состояния")
 
         val builder = NotificationCompat.Builder(this, "pulse_channel")
             .setContentTitle(title)
