@@ -28,6 +28,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvBpm: TextView
     private lateinit var tvBpmLabel: TextView
     private lateinit var tvStepsVal: TextView
+    private lateinit var tvBatteryVal: TextView
     private lateinit var tvLogs: TextView
     private lateinit var scrollView: ScrollView
     private lateinit var btnToggle: Button
@@ -65,6 +66,15 @@ class MainActivity : AppCompatActivity() {
                 "com.pulsebridge.STATS" -> {
                     val steps = intent.getIntExtra("steps", 0)
                     tvStepsVal.text = if (steps > 0) "$steps" else "--"
+                }
+                "com.pulsebridge.BATTERY" -> {
+                    val level = intent.getIntExtra("level", 0)
+                    if (level > 0) {
+                        tvBatteryVal.text = "$level%"
+                        tvBatteryVal.setTextColor(
+                            if (level > 20) Color.parseColor("#10B981") else Color.parseColor("#EF4444")
+                        )
+                    }
                 }
             }
         }
@@ -124,7 +134,7 @@ class MainActivity : AppCompatActivity() {
         headerRow.addView(tvStatusBadge)
         root.addView(headerRow)
 
-        // 2. HERO CARD (Heart Rate Display)
+        // 2. HERO CARD (Heart Rate & Mini Stats)
         val heroCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -164,6 +174,7 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
         }
 
+        // Mini metrics: ШАГИ | ЗАРЯД | УСТРОЙСТВО
         val metricsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -171,11 +182,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         val stepBadge = createMiniMetric("ШАГИ", "--").also { tvStepsVal = it.second }
-        val obsBadge = createMiniMetric("OBS", "y.shit.vc:68")
+        val batBadge = createMiniMetric("ЗАРЯД", "--%").also { tvBatteryVal = it.second }
         val macBadge = createMiniMetric("УСТРОЙСТВО", "Band 9 Active")
 
         metricsRow.addView(stepBadge.first)
-        metricsRow.addView(obsBadge.first)
+        metricsRow.addView(batBadge.first)
         metricsRow.addView(macBadge.first)
 
         heroCard.addView(tvHeartIcon)
@@ -323,6 +334,7 @@ class MainActivity : AppCompatActivity() {
             addAction("com.pulsebridge.STATUS")
             addAction("com.pulsebridge.BPM")
             addAction("com.pulsebridge.STATS")
+            addAction("com.pulsebridge.BATTERY")
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)

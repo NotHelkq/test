@@ -45,6 +45,9 @@ class PulseBleService : Service() {
         val CHAR_TX_005F: UUID = UUID.fromString("0000005f-0000-1000-8000-00805f9b34fb")
         val CLIENT_CONFIG: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
+        val SERVICE_BATTERY: UUID = UUID.fromString("0000180f-0000-1000-8000-00805f9b34fb")
+        val CHAR_BATTERY_LEVEL: UUID = UUID.fromString("00002a19-0000-1000-8000-00805f9b34fb")
+
         private val PREAMBLE = byteArrayOf(0xA5.toByte(), 0xA5.toByte())
     }
 
@@ -55,6 +58,10 @@ class PulseBleService : Service() {
     private val scope = CoroutineScope(Dispatchers.IO + Job())
     private val rxBuffer = ByteArrayOutputStream()
     private val seqCounter = AtomicInteger(0)
+
+    // Очередь передачи (TX Queue) для предотвращения коллизий GATT write
+    private val txQueue = LinkedList<ByteArray>()
+    private var isTxBusy = false
 
     private val secretKey = hexStringToByteArray(AUTH_KEY_HEX)
     private val phoneNonce = ByteArray(16)
@@ -71,6 +78,7 @@ class PulseBleService : Service() {
 
     private var lastRecordedBpm = 0
     private var lastRecordedSteps = 0
+    private var lastBatteryLevel = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -114,6 +122,11 @@ class PulseBleService : Service() {
 
     private fun sendStatsUpdate(steps: Int) {
         sendBroadcast(Intent("com.pulsebridge.STATS").apply { putExtra("steps", steps) })
+    }
+
+    private fun sendBatteryUpdate(level: Int) {
+        lastBatteryLevel = level
+        sendBroadcast(Intent("com.pulsebridge.BATTERY").apply { putExtra("level", level) })
     }
 
     private fun connectDirect() {
@@ -176,6 +189,17 @@ class PulseBleService : Service() {
             } else {
                 sendLog("ОШИБКА: Client config descriptor не найден на 0x005e")
             }
+
+            // Опрос службы батареи 0x180F
+            val sBat = gatt.getService(SERVICE_BATTERY)
+            val cBat = sBat?.getCharacteristic(CHAR_BATTERY_LEVEL)
+            if (cBat != null) {
+                gatt.setCharacteristicNotification(cBat, true)
+                scope.launch {
+                    delay(1500)
+                    gatt.readCharacteristic(cBat)
+                }
+            }
         }
 
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
@@ -185,14 +209,48 @@ class PulseBleService : Service() {
             }
         }
 
+        override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+            synchronized(this@PulseBleService) {
+                processNextTx(gatt)
+            }
+        }
+
         @Suppress("DEPRECATION")
         @Deprecated("Deprecated in Java")
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            handleRxData(gatt, characteristic.value ?: ByteArray(0))
+            onCharacteristicChanged(gatt, characteristic, characteristic.value ?: ByteArray(0))
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
+            val shortUuid = characteristic.uuid.toString().substring(4, 8)
+            if (shortUuid.equals("2a19", true)) {
+                val lvl = value.firstOrNull()?.toInt()?.and(0xFF) ?: 0
+                if (lvl in 1..100) {
+                    sendBatteryUpdate(lvl)
+                    sendLog("🔋 Заряд батареи: $lvl%")
+                }
+                return
+            }
+
+            sendLog("<< [0x$shortUuid] RX (${value.size} B): ${value.toHex()}")
             handleRxData(gatt, value)
+        }
+
+        @Suppress("DEPRECATION")
+        @Deprecated("Deprecated in Java")
+        override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+            onCharacteristicRead(gatt, characteristic, characteristic.value ?: ByteArray(0), status)
+        }
+
+        override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray, status: Int) {
+            val shortUuid = characteristic.uuid.toString().substring(4, 8)
+            if (shortUuid.equals("2a19", true)) {
+                val lvl = value.firstOrNull()?.toInt()?.and(0xFF) ?: 0
+                if (lvl in 1..100) {
+                    sendBatteryUpdate(lvl)
+                    sendLog("🔋 Заряд батареи: $lvl%")
+                }
+            }
         }
     }
 
@@ -200,9 +258,75 @@ class PulseBleService : Service() {
         pingJob?.cancel()
         rxBuffer.reset()
         seqCounter.set(0)
+        synchronized(this) {
+            txQueue.clear()
+            isTxBusy = false
+        }
         isSessionConfigured = false
         isAuthenticated = false
         isStreaming = false
+    }
+
+    // =========================================================================
+    // Очередь передачи (TX Queue)
+    // =========================================================================
+
+    @Synchronized
+    private fun writeTx(gatt: BluetoothGatt, data: ByteArray) {
+        txQueue.add(data)
+        if (!isTxBusy) {
+            processNextTx(gatt)
+        }
+    }
+
+    @Synchronized
+    private fun processNextTx(gatt: BluetoothGatt) {
+        if (txQueue.isEmpty()) {
+            isTxBusy = false
+            return
+        }
+        val ch = txChar
+        if (ch == null) {
+            txQueue.clear()
+            isTxBusy = false
+            return
+        }
+
+        isTxBusy = true
+        val data = txQueue.poll() ?: run {
+            isTxBusy = false
+            return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeCharacteristic(ch, data, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+        } else {
+            @Suppress("DEPRECATION")
+            ch.value = data
+            @Suppress("DEPRECATION")
+            gatt.writeCharacteristic(ch)
+        }
+
+        // Защитный таймаут на случай задержки стека BLE
+        scope.launch {
+            delay(350)
+            synchronized(this@PulseBleService) {
+                if (isTxBusy) {
+                    processNextTx(gatt)
+                }
+            }
+        }
+    }
+
+    private fun writeDescriptorCompat(gatt: BluetoothGatt, desc: BluetoothGattDescriptor, value: ByteArray) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeDescriptor(desc, value)
+        } else {
+            @Suppress("DEPRECATION")
+            desc.value = value
+            @Suppress("DEPRECATION")
+            gatt.writeDescriptor(desc)
+        }
     }
 
     // =========================================================================
@@ -266,29 +390,6 @@ class PulseBleService : Service() {
         return Integer.reverse(crc) ushr 16
     }
 
-    private fun writeTx(gatt: BluetoothGatt, data: ByteArray) {
-        val ch = txChar ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeCharacteristic(ch, data, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
-        } else {
-            @Suppress("DEPRECATION")
-            ch.value = data
-            @Suppress("DEPRECATION")
-            gatt.writeCharacteristic(ch)
-        }
-    }
-
-    private fun writeDescriptorCompat(gatt: BluetoothGatt, desc: BluetoothGattDescriptor, value: ByteArray) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeDescriptor(desc, value)
-        } else {
-            @Suppress("DEPRECATION")
-            desc.value = value
-            @Suppress("DEPRECATION")
-            gatt.writeDescriptor(desc)
-        }
-    }
-
     // =========================================================================
     // Прием и разбор пакетов (RX Buffer)
     // =========================================================================
@@ -330,7 +431,7 @@ class PulseBleService : Service() {
     private fun processPacket(gatt: BluetoothGatt, packetType: Int, seq: Int, payload: ByteArray) {
         when (packetType) {
             1 -> {
-                // ACK
+                // ACK от часов
             }
             2 -> {
                 // SessionConfig
@@ -469,6 +570,11 @@ class PulseBleService : Service() {
         // Логируем все входящие команды Protobuf
         sendLog("<< [Protobuf Ch 1] Cmd type=$type, subtype=$subtype (${data.size} B)")
 
+        // Запрос батареи / статуса системы (type = 2)
+        if (type == 2) {
+            parseSystemBattery(cmd)
+        }
+
         // Разбор RealTimeStats (type = 8, subtype = 47)
         if (type == 8 && subtype == 47) {
             val healthBytes = cmd[10]?.asBytes()
@@ -488,8 +594,21 @@ class PulseBleService : Service() {
             }
         }
 
-        // Сканер на наличие пульса в полях
         scanProtobufForHeartRate(cmd)
+    }
+
+    private fun parseSystemBattery(cmd: Map<Int, ProtoReader.Value>) {
+        val sysBytes = cmd[4]?.asBytes() ?: return
+        val sysFields = ProtoReader.parseFields(sysBytes)
+        val pwrBytes = sysFields[2]?.asBytes() ?: return
+        val pwrFields = ProtoReader.parseFields(pwrBytes)
+        val batBytes = pwrFields[1]?.asBytes() ?: return
+        val batFields = ProtoReader.parseFields(batBytes)
+        val level = batFields[1]?.asLong()?.toInt() ?: 0
+        if (level in 1..100) {
+            sendBatteryUpdate(level)
+            sendLog("🔋 Заряд батареи: $level%")
+        }
     }
 
     private fun handleActivityChannel(data: ByteArray) {
@@ -550,7 +669,13 @@ class PulseBleService : Service() {
 
         scope.launch {
             try {
-                // 1. Установка режима постоянного замера пульса (интервал 1 мин / smart)
+                // 1. Запрос уровня заряда батареи (type = 2, subtype = 1)
+                val cmdBat = byteArrayOf(0x08, 0x02, 0x10, 0x01)
+                val encBat = encryptV2(encryptionKey, cmdBat)
+                sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = encBat)
+                delay(300)
+
+                // 2. Установка режима постоянного замера пульса (интервал 1 мин / smart)
                 val hrConfigBytes = byteArrayOf(
                     0x08, 0x08, 0x10, 0x0B, 0x52.toByte(), 0x08, 0x42, 0x06, 0x10, 0x01, 0x2A, 0x02, 0x08, 0x01
                 )
@@ -559,14 +684,14 @@ class PulseBleService : Service() {
                 sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = encHrConfig)
                 delay(300)
 
-                // 2. Включение потока RealTimeStats (type=8, subtype=45)
+                // 3. Включение потока RealTimeStats (type=8, subtype=45)
                 val rtsStart = byteArrayOf(0x08, 0x08, 0x10, 0x2D)
                 val encRts = encryptV2(encryptionKey, rtsStart)
                 sendLog(">> Старт посекундного потока RealTimeStats (type=8, subtype=45)...")
                 sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = encRts)
                 delay(300)
 
-                // 3. Запуск тренировки (Workout Status STARTED), зажигающей диоды сенсора
+                // 4. Запуск тренировки (Workout Status STARTED), зажигающей диоды сенсора
                 val ts = (System.currentTimeMillis() / 1000).toInt()
                 val workoutMsg = ProtoWriter.encodeVarint(1, ts.toLong()) +
                         ProtoWriter.encodeVarint(3, 1) +
@@ -580,7 +705,7 @@ class PulseBleService : Service() {
                 sendLog(">> Запуск спортивного режима для непрерывного сенсора (type=8, subtype=26)...")
                 sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = encWorkout)
 
-                // 4. Периодический keep-alive раз в 15 секунд
+                // 5. Периодический keep-alive раз в 15 секунд
                 pingJob?.cancel()
                 pingJob = scope.launch {
                     while (isActive && isAuthenticated) {
