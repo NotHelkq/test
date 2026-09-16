@@ -787,12 +787,16 @@ class ShimmerGradientButton @JvmOverloads constructor(
         Color.parseColor("#1F0A15")
     )
 
+    private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        typeface = Typeface.DEFAULT_BOLD
+        textAlign = Paint.Align.CENTER
+    }
+
     init {
         background = null
-        setTextColor(Color.WHITE)
-        textSize = 14.5f
-        letterSpacing = 0.05f
-        setTypeface(null, Typeface.BOLD)
+        gravity = Gravity.CENTER
+        textAlignment = View.TEXT_ALIGNMENT_CENTER
 
         animator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 3500L
@@ -846,7 +850,14 @@ class ShimmerGradientButton @JvmOverloads constructor(
             canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, strokePaint)
         }
 
-        super.onDraw(canvas)
+        // Strictly draw centered button text
+        val buttonText = text?.toString() ?: ""
+        if (buttonText.isNotEmpty()) {
+            labelPaint.textSize = dpToPx(14f)
+            labelPaint.letterSpacing = 0.05f
+            val centerY = (h / 2f) - ((labelPaint.descent() + labelPaint.ascent()) / 2f)
+            canvas.drawText(buttonText, w / 2f, centerY, labelPaint)
+        }
     }
 
     override fun onDetachedFromWindow() {
