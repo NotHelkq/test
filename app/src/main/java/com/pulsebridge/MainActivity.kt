@@ -4,6 +4,7 @@ import android.Manifest
 import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
 import android.animation.ValueAnimator
+import android.annotation.SuppressLint
 import android.app.Dialog
 import android.content.*
 import android.content.pm.PackageManager
@@ -15,9 +16,7 @@ import android.os.Build
 import android.os.Bundle
 import android.util.AttributeSet
 import android.util.TypedValue
-import android.view.Gravity
-import android.view.View
-import android.view.Window
+import android.view.*
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -32,9 +31,15 @@ enum class Lang(val code: String) {
     RU("ru")
 }
 
-enum class GraphMode {
-    LIVE_60S,
-    FULL_SESSION
+enum class TimeRange(val seconds: Int, val enKey: String, val ruKey: String) {
+    SEC_60(60, "60s", "60с"),
+    MIN_5(300, "5m", "5м"),
+    MIN_10(600, "10m", "10м"),
+    MIN_30(1800, "30m", "30м"),
+    HOUR_1(3600, "1h", "1ч"),
+    ALL(-1, "All", "Всё");
+
+    fun getLabel(lang: Lang): String = if (lang == Lang.EN) enKey else ruKey
 }
 
 data class SessionRecord(
@@ -53,16 +58,14 @@ object AppStrings {
             "app_title" -> "PulseBridge"
             "device_sub" -> "Xiaomi Smart Band 9 Active"
             "status_stopped" -> "Stopped"
-            "status_live" -> "Live"
+            "status_live" -> "Streaming"
             "bpm_label" -> "BEATS PER MINUTE (BPM)"
-            "clutch_label" -> "CLUTCH (BPM)"
+            "clutch_label" -> "🔥 CLUTCH MODE (BPM)"
             "metric_min" -> "MIN"
             "metric_avg" -> "AVG"
             "metric_max" -> "MAX"
             "metric_bat" -> "BATTERY"
-            "graph_title" -> "PULSE GRAPH"
-            "tab_live" -> "60s Live"
-            "tab_session" -> "Full Session"
+            "graph_title" -> "HEART RATE GRAPH"
             "btn_start" -> "▶  START MONITORING"
             "btn_stop" -> "⏹  STOP"
             "btn_history" -> "📜 HISTORY"
@@ -77,8 +80,9 @@ object AppStrings {
             "history_clear" -> "Clear All History"
             "close" -> "Close"
             "view_graph" -> "View on Graph"
-            "viewing_history" -> "Viewing History Session:"
+            "viewing_history" -> "Viewing Archive:"
             "back_to_live" -> "Back to Live"
+            "zoom_reset" -> "↺ Reset Zoom"
             "toast_copied" -> "✅ Logs copied & uploaded to server!"
             "toast_cleared" -> "🗑 Session stats and logs cleared"
             "toast_history_cleared" -> "🗑 Session history cleared"
@@ -88,7 +92,7 @@ object AppStrings {
             "app_title" -> "PulseBridge"
             "device_sub" -> "Xiaomi Smart Band 9 Active"
             "status_stopped" -> "Остановлено"
-            "status_live" -> "В эфире"
+            "status_live" -> "Трансляция"
             "bpm_label" -> "УДАРОВ В МИНУТУ (BPM)"
             "clutch_label" -> "🔥 КЛАТЧ (BPM)"
             "metric_min" -> "МИН"
@@ -96,8 +100,6 @@ object AppStrings {
             "metric_max" -> "МАКС"
             "metric_bat" -> "ЗАРЯД"
             "graph_title" -> "ГРАФИК ПУЛЬСА"
-            "tab_live" -> "60 сек (Live)"
-            "tab_session" -> "Вся сессия"
             "btn_start" -> "▶  СТАРТ МОНИТОРИНГА"
             "btn_stop" -> "⏹  ОСТАНОВИТЬ"
             "btn_history" -> "📜 ИСТОРИЯ"
@@ -112,19 +114,50 @@ object AppStrings {
             "history_clear" -> "Очистить историю"
             "close" -> "Закрыть"
             "view_graph" -> "Открыть график"
-            "viewing_history" -> "Просмотр архивной сессии:"
+            "viewing_history" -> "Архивная сессия:"
             "back_to_live" -> "Вернуться к Live"
+            "zoom_reset" -> "↺ Сброс зума"
             "toast_copied" -> "✅ Логи скопированы и загружены на сервер!"
             "toast_cleared" -> "🗑 Статистика и логи очищены"
             "toast_history_cleared" -> "🗑 История сессий очищена"
             else -> key
         }
     }
+
+    fun formatStatus(raw: String, lang: Lang): String {
+        if (lang == Lang.RU) {
+            return when {
+                raw.contains("Workout", ignoreCase = true) || raw.contains("Трансляция", ignoreCase = true) -> "Трансляция"
+                raw.contains("Авторизовано", ignoreCase = true) -> "Авторизовано"
+                raw.contains("Подключение", ignoreCase = true) -> "Подключение..."
+                raw.contains("Опрос", ignoreCase = true) -> "Опрос датчиков..."
+                raw.contains("выключен", ignoreCase = true) -> "Bluetooth выключен"
+                raw.contains("Ошибка", ignoreCase = true) -> "Ошибка подключения"
+                raw.contains("Остановлено", ignoreCase = true) -> "Остановлено"
+                raw.contains("Отключено", ignoreCase = true) -> "Отключено"
+                else -> raw
+            }
+        }
+        return when {
+            raw.contains("Трансляция", ignoreCase = true) || raw.contains("Workout", ignoreCase = true) -> "Streaming"
+            raw.contains("Авторизовано", ignoreCase = true) -> "Authorized"
+            raw.contains("Подключение", ignoreCase = true) -> "Connecting..."
+            raw.contains("Опрос", ignoreCase = true) -> "Polling sensor..."
+            raw.contains("выключен", ignoreCase = true) -> "Bluetooth is OFF"
+            raw.contains("Ошибка", ignoreCase = true) -> "Connection Error"
+            raw.contains("Остановлено", ignoreCase = true) -> "Stopped"
+            raw.contains("Отключено", ignoreCase = true) -> "Disconnected"
+            else -> raw
+        }
+    }
 }
 
 /**
- * Custom live & session heart rate chart view with gradient fill,
- * smooth lines, grid lines, dynamic clutch coloring, and glowing cursor.
+ * Custom live & session heart rate chart view with:
+ * - Time range filtering (60s, 5m, 10m, 30m, 1h, All)
+ * - Pinch-to-zoom (up to 20x) and horizontal panning gestures
+ * - Interactive scrubber / touch inspection
+ * - Vibrant dual-layer neon glow stroke & high-contrast gradient fill
  */
 class HrChartView @JvmOverloads constructor(
     context: Context,
@@ -133,18 +166,32 @@ class HrChartView @JvmOverloads constructor(
 ) : View(context, attrs, defStyleAttr) {
 
     var lang: Lang = Lang.EN
-    var currentMode: GraphMode = GraphMode.LIVE_60S
+    var activeRange: TimeRange = TimeRange.SEC_60
+    var onZoomChangedListener: ((Boolean, Float) -> Unit)? = null
 
-    private val livePoints = ArrayList<Int>()
-    private val sessionPoints = ArrayList<Int>()
+    private val allSessionPoints = ArrayList<Int>()
     private var historicalPoints: List<Int>? = null
+
+    // Zoom & Pan state
+    var zoomScale: Float = 1.0f
+        private set
+    private var panRatio: Float = 1.0f // 1.0f means rightmost (latest)
+
+    // Touch inspection / Scrubber
+    private var touchedX: Float? = null
+    private var inspectedBpm: Int? = null
+
+    // Paints
+    private val glowLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
 
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = dpToPx(2.5f)
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
-        color = Color.parseColor("#FF2D55")
     }
 
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -154,64 +201,200 @@ class HrChartView @JvmOverloads constructor(
     private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = dpToPx(1f)
-        color = Color.parseColor("#171F2F")
+        color = Color.parseColor("#172033")
         pathEffect = DashPathEffect(floatArrayOf(dpToPx(4f), dpToPx(4f)), 0f)
     }
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = dpToPx(9.5f)
         typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-        color = Color.parseColor("#475569")
+        color = Color.parseColor("#5A6E8C")
     }
 
-    private val dotGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
+    private val scrubberLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = dpToPx(1.5f)
+        color = Color.parseColor("#38BDF8")
+        pathEffect = DashPathEffect(floatArrayOf(dpToPx(3f), dpToPx(3f)), 0f)
     }
 
-    private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val scrubberBadgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
+        color = Color.parseColor("#0C192E")
+    }
+
+    private val scrubberBadgeStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = dpToPx(1f)
+        color = Color.parseColor("#38BDF8")
+    }
+
+    private val scrubberTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = dpToPx(11f)
+        typeface = Typeface.DEFAULT_BOLD
         color = Color.WHITE
+        textAlign = Paint.Align.CENTER
     }
+
+    private val dotGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.WHITE }
 
     private val linePath = Path()
     private val fillPath = Path()
 
+    // Gestures
+    private val scaleDetector: ScaleGestureDetector
+    private val gestureDetector: GestureDetector
+
+    init {
+        scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                val newScale = (zoomScale * detector.scaleFactor).coerceIn(1.0f, 25.0f)
+                if (newScale != zoomScale) {
+                    zoomScale = newScale
+                    onZoomChangedListener?.invoke(zoomScale > 1.05f, zoomScale)
+                    postInvalidate()
+                }
+                return true
+            }
+        })
+
+        gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
+                if (zoomScale > 1.0f) {
+                    val w = width - dpToPx(42f)
+                    if (w > 0) {
+                        val delta = distanceX / (w * (zoomScale - 1f))
+                        panRatio = (panRatio + delta).coerceIn(0f, 1f)
+                        postInvalidate()
+                    }
+                }
+                return true
+            }
+
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                handleScrubber(e.x)
+                return true
+            }
+        })
+    }
+
     fun addPoint(bpm: Int) {
         if (bpm <= 0) return
-        if (livePoints.size >= 60) {
-            livePoints.removeAt(0)
-        }
-        livePoints.add(bpm)
-        sessionPoints.add(bpm)
+        allSessionPoints.add(bpm)
         postInvalidate()
     }
 
-    fun setMode(mode: GraphMode) {
+    fun setTimeRange(range: TimeRange) {
+        activeRange = range
         historicalPoints = null
-        currentMode = mode
+        resetZoom()
+        postInvalidate()
+    }
+
+    fun resetZoom() {
+        zoomScale = 1.0f
+        panRatio = 1.0f
+        touchedX = null
+        inspectedBpm = null
+        onZoomChangedListener?.invoke(false, 1.0f)
         postInvalidate()
     }
 
     fun showHistorical(points: List<Int>) {
         historicalPoints = points
+        resetZoom()
         postInvalidate()
     }
 
     fun returnToLive() {
         historicalPoints = null
+        resetZoom()
         postInvalidate()
     }
 
     fun isHistorical(): Boolean = historicalPoints != null
 
     fun clear() {
-        livePoints.clear()
-        sessionPoints.clear()
+        allSessionPoints.clear()
         historicalPoints = null
+        resetZoom()
         postInvalidate()
     }
 
-    fun getSessionPoints(): List<Int> = sessionPoints.toList()
+    fun getSessionPoints(): List<Int> = allSessionPoints.toList()
+
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        parent?.requestDisallowInterceptTouchEvent(true)
+
+        scaleDetector.onTouchEvent(event)
+        gestureDetector.onTouchEvent(event)
+
+        if (event.action == MotionEvent.ACTION_MOVE && !scaleDetector.isInProgress) {
+            handleScrubber(event.x)
+        } else if (event.action == MotionEvent.ACTION_UP || event.action == MotionEvent.ACTION_CANCEL) {
+            // Keep scrubber visible for 2 seconds or fade
+            postDelayed({
+                touchedX = null
+                inspectedBpm = null
+                postInvalidate()
+            }, 2500)
+        }
+        return true
+    }
+
+    private fun handleScrubber(touchX: Float) {
+        val padL = dpToPx(28f)
+        val padR = dpToPx(14f)
+        val chartW = width - padL - padR
+        if (chartW <= 0) return
+
+        val clampedX = touchX.coerceIn(padL, padL + chartW)
+        touchedX = clampedX
+
+        val visibleList = getVisibleData()
+        if (visibleList.isNotEmpty()) {
+            val ratio = (clampedX - padL) / chartW
+            val index = (ratio * (visibleList.size - 1)).toInt().coerceIn(0, visibleList.size - 1)
+            inspectedBpm = visibleList[index]
+        }
+        postInvalidate()
+    }
+
+    /**
+     * Extracts the slice of points according to TimeRange, zoomScale, and panRatio.
+     */
+    private fun getVisibleData(): List<Int> {
+        val baseList = historicalPoints ?: allSessionPoints
+        if (baseList.isEmpty()) return emptyList()
+
+        // 1. Time range filter
+        val rangeCount = when (activeRange) {
+            TimeRange.SEC_60 -> 60
+            TimeRange.MIN_5 -> 300
+            TimeRange.MIN_10 -> 600
+            TimeRange.MIN_30 -> 1800
+            TimeRange.HOUR_1 -> 3600
+            TimeRange.ALL -> baseList.size
+        }
+
+        val rangeFiltered = if (activeRange == TimeRange.ALL || historicalPoints != null || baseList.size <= rangeCount) {
+            baseList
+        } else {
+            baseList.takeLast(rangeCount)
+        }
+
+        // 2. Zoom & Pan window
+        if (zoomScale <= 1.05f || rangeFiltered.size < 10) {
+            return rangeFiltered
+        }
+
+        val visibleSize = maxOf(6, (rangeFiltered.size / zoomScale).toInt())
+        val maxStart = rangeFiltered.size - visibleSize
+        val start = (panRatio * maxStart).toInt().coerceIn(0, maxStart)
+        return rangeFiltered.subList(start, start + visibleSize)
+    }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -229,11 +412,11 @@ class HrChartView @JvmOverloads constructor(
         val chartH = h - padT - padB
         if (chartW <= 0 || chartH <= 0) return
 
-        val activeList = historicalPoints ?: if (currentMode == GraphMode.LIVE_60S) livePoints else sessionPoints
+        val visibleList = getVisibleData()
 
         // Dynamic Y scale
-        val minBpm = if (activeList.isEmpty()) 50 else maxOf(40, activeList.minOrNull()!! - 10)
-        val maxBpm = if (activeList.isEmpty()) 150 else maxOf(130, activeList.maxOrNull()!! + 10)
+        val minBpm = if (visibleList.isEmpty()) 50 else maxOf(40, visibleList.minOrNull()!! - 10)
+        val maxBpm = if (visibleList.isEmpty()) 150 else maxOf(130, visibleList.maxOrNull()!! + 10)
         val range = maxOf(30, maxBpm - minBpm)
 
         // Subtle horizontal grid lines: 60, 90, 120, 150, 180
@@ -247,7 +430,7 @@ class HrChartView @JvmOverloads constructor(
             }
         }
 
-        if (activeList.isEmpty()) {
+        if (visibleList.isEmpty()) {
             val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.parseColor("#475569")
                 textSize = dpToPx(11f)
@@ -258,11 +441,12 @@ class HrChartView @JvmOverloads constructor(
             return
         }
 
-        val count = activeList.size
+        val count = visibleList.size
         linePath.reset()
         fillPath.reset()
 
-        val stepX = if (currentMode == GraphMode.LIVE_60S && historicalPoints == null) {
+        // If in 60s live mode and points count < 60, spread as it arrives
+        val stepX = if (activeRange == TimeRange.SEC_60 && historicalPoints == null && zoomScale <= 1.05f) {
             if (count < 60) chartW / 59f else chartW / (count - 1).toFloat()
         } else {
             if (count > 1) chartW / (count - 1).toFloat() else chartW
@@ -272,7 +456,7 @@ class HrChartView @JvmOverloads constructor(
         var lastY = padT + chartH
 
         for (i in 0 until count) {
-            val bpm = activeList[i]
+            val bpm = visibleList[i]
             val x = padL + i * stepX
             val ratio = ((bpm - minBpm).toFloat() / range).coerceIn(0f, 1f)
             val y = padT + chartH - (ratio * chartH)
@@ -292,28 +476,54 @@ class HrChartView @JvmOverloads constructor(
         fillPath.lineTo(lastX, padT + chartH)
         fillPath.close()
 
-        val latestBpm = activeList.last()
+        val latestBpm = visibleList.last()
         val isClutch = latestBpm >= 160
         val lineColor = if (isClutch) Color.parseColor("#FF0055") else Color.parseColor("#FF2D55")
 
-        // Draw gradient fill
+        // 1. High-Contrast Gradient Fill under curve
         fillPaint.shader = LinearGradient(
             0f, padT, 0f, padT + chartH,
-            if (isClutch) Color.argb(80, 255, 0, 85) else Color.argb(60, 255, 45, 85),
+            if (isClutch) Color.argb(120, 255, 0, 85) else Color.argb(95, 255, 45, 85),
             Color.TRANSPARENT,
             Shader.TileMode.CLAMP
         )
         canvas.drawPath(fillPath, fillPaint)
 
-        // Draw line
+        // 2. Neon Glow Bloom Layer (Thick semi-transparent line underneath)
+        glowLinePaint.color = if (isClutch) Color.argb(90, 255, 0, 85) else Color.argb(75, 255, 45, 85)
+        glowLinePaint.strokeWidth = dpToPx(6.5f)
+        canvas.drawPath(linePath, glowLinePaint)
+
+        // 3. Crisp Foreground Neon Stroke
         linePaint.color = lineColor
+        linePaint.strokeWidth = dpToPx(2.6f)
         canvas.drawPath(linePath, linePaint)
 
-        // Draw glowing point at the end (only if live mode)
-        if (historicalPoints == null) {
-            dotGlowPaint.color = if (isClutch) Color.argb(140, 255, 0, 85) else Color.argb(110, 255, 45, 85)
-            canvas.drawCircle(lastX, lastY, dpToPx(6f), dotGlowPaint)
-            canvas.drawCircle(lastX, lastY, dpToPx(3f), dotPaint)
+        // 4. Glowing Live Cursor at the end (if not inspecting history)
+        if (historicalPoints == null && zoomScale <= 1.05f) {
+            dotGlowPaint.color = if (isClutch) Color.argb(160, 255, 0, 85) else Color.argb(130, 255, 45, 85)
+            canvas.drawCircle(lastX, lastY, dpToPx(7f), dotGlowPaint)
+            dotGlowPaint.color = if (isClutch) Color.argb(230, 255, 0, 85) else Color.argb(200, 255, 45, 85)
+            canvas.drawCircle(lastX, lastY, dpToPx(4.5f), dotGlowPaint)
+            canvas.drawCircle(lastX, lastY, dpToPx(2.5f), dotPaint)
+        }
+
+        // 5. Scrubber / Inspection Marker (when touched)
+        if (touchedX != null && inspectedBpm != null) {
+            val sx = touchedX!!
+            canvas.drawLine(sx, padT, sx, padT + chartH, scrubberLinePaint)
+
+            // Draw floating HUD tooltip badge
+            val badgeText = "$inspectedBpm BPM"
+            val badgeW = dpToPx(70f)
+            val badgeH = dpToPx(24f)
+            val badgeX = (sx - badgeW / 2f).coerceIn(padL, padL + chartW - badgeW)
+            val badgeY = padT + dpToPx(2f)
+
+            val badgeRect = RectF(badgeX, badgeY, badgeX + badgeW, badgeY + badgeH)
+            canvas.drawRoundRect(badgeRect, dpToPx(6f), dpToPx(6f), scrubberBadgePaint)
+            canvas.drawRoundRect(badgeRect, dpToPx(6f), dpToPx(6f), scrubberBadgeStroke)
+            canvas.drawText(badgeText, badgeRect.centerX(), badgeRect.centerY() + dpToPx(4f), scrubberTextPaint)
         }
     }
 
@@ -339,7 +549,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvStatusBadge: TextView
     private lateinit var btnLangToggle: TextView
 
-    private lateinit var heroCard: LinearLayout
+    private lateinit var heroCard: FrameLayout
+    private lateinit var heroGlowAura: View
+    private lateinit var heroCardContent: LinearLayout
     private lateinit var tvHeartIcon: TextView
     private lateinit var tvBpm: TextView
     private lateinit var tvBpmLabel: TextView
@@ -354,9 +566,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvBatteryLbl: TextView
 
     private lateinit var tvGraphTitle: TextView
-    private lateinit var btnTabLive: TextView
-    private lateinit var btnTabSession: TextView
     private lateinit var hrChartView: HrChartView
+    private lateinit var rangeButtonsContainer: LinearLayout
+    private val rangeButtons = mutableMapOf<TimeRange, TextView>()
+
+    private lateinit var btnResetZoom: TextView
 
     private lateinit var historicalBanner: LinearLayout
     private lateinit var tvHistoricalInfo: TextView
@@ -377,6 +591,7 @@ class MainActivity : AppCompatActivity() {
     private var heartAnimator: ObjectAnimator? = null
     private var isRunning = false
     private var isLogsVisible = true
+    private var lastRawStatus: String = "Остановлено"
 
     // Session Statistics
     private var sessionStartTimeMs: Long = 0L
@@ -399,6 +614,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 "com.pulsebridge.STATUS" -> {
                     val status = intent.getStringExtra("status") ?: return
+                    lastRawStatus = status
                     updateStatusBadge(status)
                 }
                 "com.pulsebridge.BPM" -> {
@@ -412,25 +628,25 @@ class MainActivity : AppCompatActivity() {
                                 tvBpm.setTextColor(Color.parseColor("#FF0055"))
                                 tvBpmLabel.text = AppStrings.get("clutch_label", currentLang)
                                 tvBpmLabel.setTextColor(Color.parseColor("#FF0055"))
-                                updateHeroGlow(isClutch = true)
+                                updateHeroGlow(isClutch = true, bpm = bpm)
                             }
                             bpm >= 130 -> {
                                 tvBpm.setTextColor(Color.parseColor("#EF4444"))
                                 tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
                                 tvBpmLabel.setTextColor(Color.parseColor("#64748B"))
-                                updateHeroGlow(isClutch = false)
+                                updateHeroGlow(isClutch = false, bpm = bpm)
                             }
                             bpm >= 100 -> {
                                 tvBpm.setTextColor(Color.parseColor("#F59E0B"))
                                 tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
                                 tvBpmLabel.setTextColor(Color.parseColor("#64748B"))
-                                updateHeroGlow(isClutch = false)
+                                updateHeroGlow(isClutch = false, bpm = bpm)
                             }
                             else -> {
                                 tvBpm.setTextColor(Color.parseColor("#10B981"))
                                 tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
                                 tvBpmLabel.setTextColor(Color.parseColor("#64748B"))
-                                updateHeroGlow(isClutch = false)
+                                updateHeroGlow(isClutch = false, bpm = bpm)
                             }
                         }
                         startHeartPulseAnimation(bpm)
@@ -455,7 +671,7 @@ class MainActivity : AppCompatActivity() {
                         tvBpm.setTextColor(Color.parseColor("#6B7280"))
                         tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
                         tvBpmLabel.setTextColor(Color.parseColor("#64748B"))
-                        updateHeroGlow(isClutch = false)
+                        updateHeroGlow(isClutch = false, bpm = 0)
                         stopHeartPulseAnimation()
                     }
                 }
@@ -484,7 +700,7 @@ class MainActivity : AppCompatActivity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#070A10"))
+            setBackgroundColor(Color.parseColor("#060910"))
             setPadding(dp(16), dp(18), dp(16), dp(12))
         }
 
@@ -539,7 +755,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         tvStatusBadge = TextView(this).apply {
-            text = "● " + AppStrings.get("status_stopped", currentLang)
+            text = "● " + AppStrings.formatStatus(lastRawStatus, currentLang)
             textSize = 11f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#94A3B8"))
@@ -553,17 +769,31 @@ class MainActivity : AppCompatActivity() {
         root.addView(headerRow)
 
         // ==========================================
-        // 2. HERO CARD (Heart Rate, Cyber Glow & Mini Stats)
+        // 2. HERO CARD (Heart Rate, Authentic Cyber Glow Aura & Mini Stats)
         // ==========================================
-        heroCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            background = makeHeroDrawable(isClutch = false)
-            setPadding(dp(16), dp(14), dp(16), dp(12))
+        heroCard = FrameLayout(this).apply {
+            background = makeHeroCardDrawable(isClutch = false)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = dp(12) }
+        }
+
+        // Dedicated luminous neon glow halo behind the BPM display
+        heroGlowAura = View(this).apply {
+            background = makeGlowAuraDrawable(isClutch = false, hasBpm = false)
+            layoutParams = FrameLayout.LayoutParams(dp(220), dp(130), Gravity.CENTER)
+        }
+        heroCard.addView(heroGlowAura)
+
+        heroCardContent = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(14), dp(16), dp(12))
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            )
         }
 
         tvHeartIcon = TextView(this).apply {
@@ -574,7 +804,7 @@ class MainActivity : AppCompatActivity() {
 
         tvBpm = TextView(this).apply {
             text = "--"
-            textSize = 50f
+            textSize = 52f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#6B7280"))
             gravity = Gravity.CENTER
@@ -618,21 +848,22 @@ class MainActivity : AppCompatActivity() {
         metricsRow.addView(maxBadge.first)
         metricsRow.addView(batBadge.first)
 
-        heroCard.addView(tvHeartIcon)
-        heroCard.addView(tvBpm)
-        heroCard.addView(tvBpmLabel)
-        heroCard.addView(metricsRow)
+        heroCardContent.addView(tvHeartIcon)
+        heroCardContent.addView(tvBpm)
+        heroCardContent.addView(tvBpmLabel)
+        heroCardContent.addView(metricsRow)
+        heroCard.addView(heroCardContent)
         root.addView(heroCard)
 
         // ==========================================
-        // 3. GRAPH CARD (Tabs: 60s Live / Full Session + Chart)
+        // 3. GRAPH CARD (Time Range Pills + Zoom Reset + Canvas Chart)
         // ==========================================
         val graphCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = makeDrawable(
-                bgColor = Color.parseColor("#0E131F"),
+                bgColor = Color.parseColor("#0C101A"),
                 radius = dp(18).toFloat(),
-                strokeColor = Color.parseColor("#1C263B"),
+                strokeColor = Color.parseColor("#1A2438"),
                 strokeWidth = dp(1)
             )
             setPadding(dp(14), dp(10), dp(14), dp(10))
@@ -642,13 +873,13 @@ class MainActivity : AppCompatActivity() {
             ).apply { bottomMargin = dp(12) }
         }
 
-        val graphHeader = LinearLayout(this).apply {
+        val graphTopHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(4) }
+            ).apply { bottomMargin = dp(6) }
         }
 
         tvGraphTitle = TextView(this).apply {
@@ -660,43 +891,57 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
 
-        // Tabs: [ 60s Live ] [ Full Session ]
-        val tabsBox = LinearLayout(this).apply {
+        btnResetZoom = TextView(this).apply {
+            text = AppStrings.get("zoom_reset", currentLang)
+            textSize = 10f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#38BDF8"))
+            background = makeDrawable(Color.parseColor("#0F223D"), radius = dp(8).toFloat(), strokeColor = Color.parseColor("#2563EB"), strokeWidth = dp(1))
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+            visibility = View.GONE
+            setOnClickListener {
+                hrChartView.resetZoom()
+            }
+        }
+
+        graphTopHeader.addView(tvGraphTitle)
+        graphTopHeader.addView(btnResetZoom)
+        graphCard.addView(graphTopHeader)
+
+        // Time Range Pills Bar: [ 60s ] [ 5m ] [ 10m ] [ 30m ] [ 1h ] [ All ]
+        val hScrollView = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(6) }
+        }
+
+        rangeButtonsContainer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            background = makeDrawable(Color.parseColor("#080B12"), radius = dp(10).toFloat(), strokeColor = Color.parseColor("#182030"), strokeWidth = dp(1))
-            setPadding(dp(2), dp(2), dp(2), dp(2))
         }
 
-        btnTabLive = TextView(this).apply {
-            text = AppStrings.get("tab_live", currentLang)
-            textSize = 10f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            background = makeDrawable(Color.parseColor("#2563EB"), radius = dp(8).toFloat())
-            setPadding(dp(8), dp(4), dp(8), dp(4))
-            setOnClickListener {
-                setGraphTab(GraphMode.LIVE_60S)
+        for (range in TimeRange.values()) {
+            val btn = TextView(this).apply {
+                text = range.getLabel(currentLang)
+                textSize = 10.5f
+                setTypeface(null, Typeface.BOLD)
+                setPadding(dp(11), dp(5), dp(11), dp(5))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { rightMargin = dp(6) }
+
+                setOnClickListener {
+                    selectTimeRange(range)
+                }
             }
+            rangeButtons[range] = btn
+            rangeButtonsContainer.addView(btn)
         }
-
-        btnTabSession = TextView(this).apply {
-            text = AppStrings.get("tab_session", currentLang)
-            textSize = 10f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#64748B"))
-            background = null
-            setPadding(dp(8), dp(4), dp(8), dp(4))
-            setOnClickListener {
-                setGraphTab(GraphMode.FULL_SESSION)
-            }
-        }
-
-        tabsBox.addView(btnTabLive)
-        tabsBox.addView(btnTabSession)
-
-        graphHeader.addView(tvGraphTitle)
-        graphHeader.addView(tabsBox)
-        graphCard.addView(graphHeader)
+        updateRangePillsUI()
+        hScrollView.addView(rangeButtonsContainer)
+        graphCard.addView(hScrollView)
 
         // Banner when inspecting a historical session
         historicalBanner = LinearLayout(this).apply {
@@ -737,8 +982,14 @@ class MainActivity : AppCompatActivity() {
             lang = currentLang
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(125)
+                dp(135)
             )
+            onZoomChangedListener = { isZoomed, scale ->
+                btnResetZoom.visibility = if (isZoomed) View.VISIBLE else View.GONE
+                if (isZoomed) {
+                    btnResetZoom.text = "↺ ${(scale * 10).toInt() / 10f}x"
+                }
+            }
         }
         graphCard.addView(hrChartView)
         root.addView(graphCard)
@@ -961,8 +1212,7 @@ class MainActivity : AppCompatActivity() {
         tvBatteryLbl.text = AppStrings.get("metric_bat", currentLang)
 
         tvGraphTitle.text = "📈 " + AppStrings.get("graph_title", currentLang)
-        btnTabLive.text = AppStrings.get("tab_live", currentLang)
-        btnTabSession.text = AppStrings.get("tab_session", currentLang)
+        btnResetZoom.text = AppStrings.get("zoom_reset", currentLang)
 
         btnToggle.text = if (isRunning) AppStrings.get("btn_stop", currentLang) else AppStrings.get("btn_start", currentLang)
         btnHideLogs.text = if (isLogsVisible) AppStrings.get("btn_hide_logs", currentLang) else AppStrings.get("btn_show_logs", currentLang)
@@ -972,8 +1222,45 @@ class MainActivity : AppCompatActivity() {
         tvConsoleTitle.text = AppStrings.get("logs_title", currentLang)
         btnHistoricalClose.text = "✕ " + AppStrings.get("back_to_live", currentLang)
 
+        updateStatusBadge(lastRawStatus)
+        updateRangePillsUI()
+
         hrChartView.lang = currentLang
         hrChartView.invalidate()
+    }
+
+    // ==========================================
+    // TIME RANGE PILLS
+    // ==========================================
+    private fun selectTimeRange(range: TimeRange) {
+        if (hrChartView.isHistorical()) {
+            closeHistoricalView()
+        }
+        hrChartView.setTimeRange(range)
+        updateRangePillsUI()
+    }
+
+    private fun updateRangePillsUI() {
+        for ((range, btn) in rangeButtons) {
+            btn.text = range.getLabel(currentLang)
+            if (range == hrChartView.activeRange && !hrChartView.isHistorical()) {
+                btn.setTextColor(Color.WHITE)
+                btn.background = makeDrawable(
+                    Color.parseColor("#2563EB"),
+                    radius = dp(10).toFloat(),
+                    strokeColor = Color.parseColor("#60A5FA"),
+                    strokeWidth = dp(1)
+                )
+            } else {
+                btn.setTextColor(Color.parseColor("#64748B"))
+                btn.background = makeDrawable(
+                    Color.parseColor("#0F1422"),
+                    radius = dp(10).toFloat(),
+                    strokeColor = Color.parseColor("#1C263B"),
+                    strokeWidth = dp(1)
+                )
+            }
+        }
     }
 
     // ==========================================
@@ -994,35 +1281,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ==========================================
-    // GRAPH TABS & MODES
-    // ==========================================
-    private fun setGraphTab(mode: GraphMode) {
-        if (hrChartView.isHistorical()) {
-            closeHistoricalView()
-        }
-        hrChartView.setMode(mode)
-        if (mode == GraphMode.LIVE_60S) {
-            btnTabLive.setTextColor(Color.WHITE)
-            btnTabLive.background = makeDrawable(Color.parseColor("#2563EB"), radius = dp(8).toFloat())
-            btnTabSession.setTextColor(Color.parseColor("#64748B"))
-            btnTabSession.background = null
-        } else {
-            btnTabSession.setTextColor(Color.WHITE)
-            btnTabSession.background = makeDrawable(Color.parseColor("#2563EB"), radius = dp(8).toFloat())
-            btnTabLive.setTextColor(Color.parseColor("#64748B"))
-            btnTabLive.background = null
-        }
-    }
-
     private fun closeHistoricalView() {
         historicalBanner.visibility = View.GONE
         hrChartView.returnToLive()
-        // Restore live metrics
         tvMinVal.text = if (minBpm > 0) minBpm.toString() else "--"
         tvAvgVal.text = if (bpmCount > 0) (bpmSum / bpmCount).toString() else "--"
         tvMaxVal.text = if (maxBpm > 0) maxBpm.toString() else "--"
-        setGraphTab(hrChartView.currentMode)
+        updateRangePillsUI()
     }
 
     // ==========================================
@@ -1030,7 +1295,7 @@ class MainActivity : AppCompatActivity() {
     // ==========================================
     private fun saveCurrentSession() {
         val points = hrChartView.getSessionPoints()
-        if (points.size < 5) return // Ignore trivial sessions
+        if (points.size < 5) return
 
         val durationSec = ((System.currentTimeMillis() - sessionStartTimeMs) / 1000).toInt()
         val minutes = durationSec / 60
@@ -1050,16 +1315,14 @@ class MainActivity : AppCompatActivity() {
                 put("avg", if (bpmCount > 0) (bpmSum / bpmCount).toInt() else minBpm)
                 put("max", maxBpm)
 
-                // Downsample points if list is very large (> 500)
                 val ptsArray = JSONArray()
-                val step = maxOf(1, points.size / 400)
+                val step = maxOf(1, points.size / 500)
                 for (i in 0 until points.size step step) {
                     ptsArray.put(points[i])
                 }
                 put("points", ptsArray)
             }
 
-            // Prepend new session
             val newArr = JSONArray()
             newArr.put(obj)
             for (i in 0 until minOf(arr.length(), 40)) {
@@ -1107,9 +1370,9 @@ class MainActivity : AppCompatActivity() {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = makeDrawable(
-                bgColor = Color.parseColor("#0C111C"),
+                bgColor = Color.parseColor("#0A0E18"),
                 radius = dp(20).toFloat(),
-                strokeColor = Color.parseColor("#1F2C47"),
+                strokeColor = Color.parseColor("#1E2A42"),
                 strokeWidth = dp(1)
             )
             setPadding(dp(18), dp(18), dp(18), dp(16))
@@ -1169,9 +1432,9 @@ class MainActivity : AppCompatActivity() {
                 val card = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     background = makeDrawable(
-                        bgColor = Color.parseColor("#131929"),
+                        bgColor = Color.parseColor("#111726"),
                         radius = dp(12).toFloat(),
-                        strokeColor = Color.parseColor("#1E283D"),
+                        strokeColor = Color.parseColor("#1B253D"),
                         strokeWidth = dp(1)
                     )
                     setPadding(dp(12), dp(10), dp(12), dp(10))
@@ -1227,13 +1490,13 @@ class MainActivity : AppCompatActivity() {
                     setPadding(dp(8), dp(4), dp(8), dp(4))
                     setOnClickListener {
                         dialog.dismiss()
-                        // Load into main graph
                         hrChartView.showHistorical(s.points)
                         historicalBanner.visibility = View.VISIBLE
                         tvHistoricalInfo.text = "${AppStrings.get("viewing_history", currentLang)} ${s.dateStr} (${s.durationStr})"
                         tvMinVal.text = s.min.toString()
                         tvAvgVal.text = s.avg.toString()
                         tvMaxVal.text = s.max.toString()
+                        updateRangePillsUI()
                     }
                 }
 
@@ -1247,7 +1510,6 @@ class MainActivity : AppCompatActivity() {
             sv.addView(listLayout)
             container.addView(sv)
 
-            // Button to clear history
             val btnClearHistory = TextView(this).apply {
                 text = "🗑 " + AppStrings.get("history_clear", currentLang)
                 textSize = 11.5f
@@ -1277,7 +1539,6 @@ class MainActivity : AppCompatActivity() {
         val clip = ClipData.newPlainText("PulseBridgeLogs", logsText)
         clipboard.setPrimaryClip(clip)
 
-        // Background server upload
         Thread {
             try {
                 val url = java.net.URL("https://y.shit.vc:68/api/log")
@@ -1307,20 +1568,24 @@ class MainActivity : AppCompatActivity() {
         tvMaxVal.text = "--"
         historicalBanner.visibility = View.GONE
         hrChartView.clear()
+        updateRangePillsUI()
     }
 
     private fun updateStatusBadge(status: String) {
-        tvStatusBadge.text = "● $status"
+        lastRawStatus = status
+        val localized = AppStrings.formatStatus(status, currentLang)
+        tvStatusBadge.text = "● $localized"
+
         when {
-            status.contains("Трансляция", true) || status.contains("Streaming", true) || status.contains("Авторизовано", true) || status.contains("Authorized", true) -> {
+            localized.contains("Streaming", true) || localized.contains("Трансляция", true) || localized.contains("Authorized", true) || localized.contains("Авторизовано", true) -> {
                 tvStatusBadge.setTextColor(Color.parseColor("#10B981"))
                 tvStatusBadge.background = makeDrawable(Color.parseColor("#063321"), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#10B981"), strokeWidth = dp(1))
             }
-            status.contains("Подключение", true) || status.contains("Connecting", true) || status.contains("Опрос", true) -> {
+            localized.contains("Connecting", true) || localized.contains("Подключение", true) || localized.contains("Polling", true) || localized.contains("Опрос", true) -> {
                 tvStatusBadge.setTextColor(Color.parseColor("#F59E0B"))
                 tvStatusBadge.background = makeDrawable(Color.parseColor("#3B2904"), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#F59E0B"), strokeWidth = dp(1))
             }
-            status.contains("Ошибка", true) || status.contains("Error", true) || status.contains("выключен", true) -> {
+            localized.contains("Error", true) || localized.contains("Ошибка", true) || localized.contains("OFF", true) || localized.contains("выключен", true) -> {
                 tvStatusBadge.setTextColor(Color.parseColor("#EF4444"))
                 tvStatusBadge.background = makeDrawable(Color.parseColor("#381111"), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#EF4444"), strokeWidth = dp(1))
             }
@@ -1331,18 +1596,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateHeroGlow(isClutch: Boolean) {
-        heroCard.background = makeHeroDrawable(isClutch)
+    private fun updateHeroGlow(isClutch: Boolean, bpm: Int) {
+        heroCard.background = makeHeroCardDrawable(isClutch)
+        heroGlowAura.background = makeGlowAuraDrawable(isClutch, bpm > 0)
     }
 
     private fun startHeartPulseAnimation(bpm: Int) {
-        val durationMs = (Math.max(0.28, Math.min(2.0, 60.0 / bpm)) * 1000).toLong()
+        val durationMs = (Math.max(0.25, Math.min(2.0, 60.0 / bpm)) * 1000).toLong()
         if (heartAnimator != null && heartAnimator?.duration == durationMs) return
         heartAnimator?.cancel()
         heartAnimator = ObjectAnimator.ofPropertyValuesHolder(
             tvHeartIcon,
-            PropertyValuesHolder.ofFloat("scaleX", 1f, 1.26f, 1f),
-            PropertyValuesHolder.ofFloat("scaleY", 1f, 1.26f, 1f)
+            PropertyValuesHolder.ofFloat("scaleX", 1f, 1.28f, 1f),
+            PropertyValuesHolder.ofFloat("scaleY", 1f, 1.28f, 1f)
         ).apply {
             duration = durationMs
             repeatCount = ValueAnimator.INFINITE
@@ -1432,12 +1698,12 @@ class MainActivity : AppCompatActivity() {
             radius = dp(16).toFloat()
         )
         stopService(Intent(this, PulseBleService::class.java))
-        updateStatusBadge(AppStrings.get("status_stopped", currentLang))
+        updateStatusBadge("Остановлено")
         tvBpm.text = "--"
         tvBpm.setTextColor(Color.parseColor("#6B7280"))
         tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
         tvBpmLabel.setTextColor(Color.parseColor("#64748B"))
-        updateHeroGlow(isClutch = false)
+        updateHeroGlow(isClutch = false, bpm = 0)
         stopHeartPulseAnimation()
     }
 
@@ -1460,18 +1726,48 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun makeHeroDrawable(isClutch: Boolean): GradientDrawable {
+    /**
+     * Card background with dark glass & glowing neon borders.
+     */
+    private fun makeHeroCardDrawable(isClutch: Boolean): GradientDrawable {
         return GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = dp(20).toFloat()
             if (isClutch) {
-                colors = intArrayOf(Color.parseColor("#260814"), Color.parseColor("#111520"))
-                orientation = GradientDrawable.Orientation.TOP_BOTTOM
-                setStroke(dp(1.5f.toInt()), Color.parseColor("#FF0055"))
+                setColor(Color.parseColor("#180B15"))
+                setStroke(dp(2), Color.parseColor("#FF0055"))
             } else {
-                colors = intArrayOf(Color.parseColor("#121726"), Color.parseColor("#0D111A"))
-                orientation = GradientDrawable.Orientation.TOP_BOTTOM
-                setStroke(dp(1), Color.parseColor("#1E273A"))
+                setColor(Color.parseColor("#0C111E"))
+                setStroke(dp(1), Color.parseColor("#1E2B44"))
+            }
+        }
+    }
+
+    /**
+     * Radial neon bloom aura behind the heart and BPM.
+     */
+    private fun makeGlowAuraDrawable(isClutch: Boolean, hasBpm: Boolean): GradientDrawable {
+        return GradientDrawable().apply {
+            gradientType = GradientDrawable.RADIAL_GRADIENT
+            gradientRadius = dp(140).toFloat()
+            if (!hasBpm) {
+                setColors(intArrayOf(
+                    Color.argb(35, 56, 189, 248),
+                    Color.argb(10, 56, 189, 248),
+                    Color.TRANSPARENT
+                ))
+            } else if (isClutch) {
+                setColors(intArrayOf(
+                    Color.argb(140, 255, 0, 85),
+                    Color.argb(50, 255, 0, 85),
+                    Color.TRANSPARENT
+                ))
+            } else {
+                setColors(intArrayOf(
+                    Color.argb(90, 255, 45, 85),
+                    Color.argb(30, 255, 45, 85),
+                    Color.TRANSPARENT
+                ))
             }
         }
     }
