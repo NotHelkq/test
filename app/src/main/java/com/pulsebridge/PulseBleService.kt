@@ -81,6 +81,10 @@ class PulseBleService : Service() {
     private var lastRecordedSteps = 0
     private var lastBatteryLevel = 0
 
+    private var rawSensorBatchesSinceAck = 0
+    private var rawSensorAckCounter = 0
+    private var lastPulsePacketTime = 0L
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -634,6 +638,7 @@ class PulseBleService : Service() {
                 val healthFields = ProtoReader.parseFields(healthBytes)
                 val rtsBytes = healthFields[39]?.asBytes()
                 if (rtsBytes != null) {
+                    lastPulsePacketTime = System.currentTimeMillis()
                     val rtsFields = ProtoReader.parseFields(rtsBytes)
                     val hr = rtsFields[4]?.asLong()?.toInt() ?: 0
                     val steps = rtsFields[1]?.asLong()?.toInt() ?: 0
@@ -648,7 +653,30 @@ class PulseBleService : Service() {
             }
         }
 
+        // 4. Подтверждение пакетов метрик датчиков (CMD_RAW_SENSOR_ACK = 49 для subtype 50 / 53)
+        if (type == 8 && (subtype == 50 || subtype == 53)) {
+            lastPulsePacketTime = System.currentTimeMillis()
+            rawSensorBatchesSinceAck++
+            if (rawSensorBatchesSinceAck >= 5) {
+                rawSensorBatchesSinceAck = 0
+                rawSensorAckCounter++
+                sendRawSensorAck(gatt, rawSensorAckCounter)
+            }
+        }
+
         scanProtobufForHeartRate(cmd)
+    }
+
+    private fun sendRawSensorAck(gatt: BluetoothGatt, counter: Int) {
+        val ackMsg = ProtoWriter.encodeVarint(1, counter.toLong()) +
+                ProtoWriter.encodeVarint(2, 0) +
+                ProtoWriter.encodeVarint(3, 0)
+        val healthMsg = ProtoWriter.encodeBytes(41, ackMsg)
+        val cmd = ProtoWriter.encodeVarint(1, 8) +
+                ProtoWriter.encodeVarint(2, 49) +
+                ProtoWriter.encodeBytes(10, healthMsg)
+        val enc = encryptV2(encryptionKey, cmd)
+        sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = enc)
     }
 
     private fun parseSystemBattery(cmd: Map<Int, ProtoReader.Value>) {
@@ -692,6 +720,7 @@ class PulseBleService : Service() {
 
     private fun onHeartRateReceived(bpm: Int, steps: Int?, source: String) {
         lastRecordedBpm = bpm
+        lastPulsePacketTime = System.currentTimeMillis()
         if (steps != null && steps > 0) {
             lastRecordedSteps = steps
             sendStatsUpdate(steps)
@@ -710,6 +739,9 @@ class PulseBleService : Service() {
 
     private fun activateContinuousSensors(gatt: BluetoothGatt) {
         isStreaming = true
+        rawSensorBatchesSinceAck = 0
+        rawSensorAckCounter = 0
+        lastPulsePacketTime = System.currentTimeMillis()
 
         scope.launch {
             try {
@@ -759,15 +791,20 @@ class PulseBleService : Service() {
                 sendLog(">> Запуск непрерывного режима сенсора (Synthetic Workout 810)...")
                 sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = encWorkout)
 
-                // 5. Периодический опрос RealTimeStats каждые 5 секунд
+                // 5. Сторожевой таймер (Watchdog): если поток данных затих на >15 сек, мягко запрашиваем RealTimeStats
                 pingJob?.cancel()
                 pingJob = scope.launch {
                     while (isActive && isAuthenticated) {
                         delay(5000)
-                        try {
-                            val pingEnc = encryptV2(encryptionKey, cmdRts)
-                            sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = pingEnc)
-                        } catch (_: Exception) {}
+                        val elapsed = System.currentTimeMillis() - lastPulsePacketTime
+                        if (elapsed > 15000 && isStreaming) {
+                            try {
+                                sendLog(">> [Watchdog] Поток прерван (${elapsed / 1000}с). Перезапрос RealTimeStats...")
+                                val pingEnc = encryptV2(encryptionKey, cmdRts)
+                                sendDataPacket(gatt, rawChannel = 1, opCode = 2, data = pingEnc)
+                                lastPulsePacketTime = System.currentTimeMillis()
+                            } catch (_: Exception) {}
+                        }
                     }
                 }
 
