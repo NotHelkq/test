@@ -55,32 +55,33 @@ data class SessionRecord(
 object AppStrings {
     fun get(key: String, lang: Lang): String = when (lang) {
         Lang.EN -> when (key) {
-            "app_title" -> "PulseBridge"
-            "device_sub" -> "Xiaomi Smart Band 9 Active"
+            "app_title" -> "PULSE"
+            "app_title_accent" -> "BRIDGE"
+            "device_sub" -> "Smart Band 9 Active • BLE v2"
             "status_stopped" -> "Stopped"
             "status_live" -> "Streaming"
-            "bpm_label" -> "BEATS PER MINUTE (BPM)"
-            "clutch_label" -> "🔥 CLUTCH MODE (BPM)"
+            "bpm_label" -> "BEATS PER MINUTE"
+            "clutch_label" -> "🔥 CLUTCH MODE (160+)"
             "metric_min" -> "MIN"
             "metric_avg" -> "AVG"
             "metric_max" -> "MAX"
             "metric_bat" -> "BATTERY"
-            "graph_title" -> "HEART RATE GRAPH"
+            "graph_title" -> "REAL-TIME TELEMETRY"
             "btn_start" -> "▶  START MONITORING"
-            "btn_stop" -> "⏹  STOP"
+            "btn_stop" -> "⏹  STOP MONITORING"
             "btn_history" -> "📜 HISTORY"
-            "btn_copy" -> "📋 COPY LOGS"
+            "btn_copy" -> "📋 SYNC LOGS"
             "btn_clear" -> "🗑 CLEAR"
             "btn_hide_logs" -> "👁 HIDE LOGS"
             "btn_show_logs" -> "👁 SHOW LOGS"
-            "logs_title" -> "EVENT CONSOLE (BLE LOGS)"
-            "waiting_data" -> "AWAITING HEART RATE DATA..."
-            "history_title" -> "SESSION HISTORY"
-            "history_empty" -> "No recorded sessions yet.\nComplete a session to review history!"
+            "logs_title" -> "BLE EVENT STREAM"
+            "waiting_data" -> "AWAITING HEART RATE SIGNAL..."
+            "history_title" -> "SESSION ARCHIVE"
+            "history_empty" -> "No recorded sessions yet.\nComplete a monitoring session to save history!"
             "history_clear" -> "Clear All History"
             "close" -> "Close"
             "view_graph" -> "View on Graph"
-            "viewing_history" -> "Viewing Archive:"
+            "viewing_history" -> "Archive:"
             "back_to_live" -> "Back to Live"
             "zoom_reset" -> "↺ Reset Zoom"
             "toast_copied" -> "✅ Logs copied & uploaded to server!"
@@ -89,32 +90,33 @@ object AppStrings {
             else -> key
         }
         Lang.RU -> when (key) {
-            "app_title" -> "PulseBridge"
-            "device_sub" -> "Xiaomi Smart Band 9 Active"
+            "app_title" -> "PULSE"
+            "app_title_accent" -> "BRIDGE"
+            "device_sub" -> "Smart Band 9 Active • BLE v2"
             "status_stopped" -> "Остановлено"
-            "status_live" -> "Трансляция"
-            "bpm_label" -> "УДАРОВ В МИНУТУ (BPM)"
-            "clutch_label" -> "🔥 КЛАТЧ (BPM)"
+            "status_live" -> "В эфире"
+            "bpm_label" -> "УДАРОВ В МИНУТУ"
+            "clutch_label" -> "🔥 КЛАТЧ РЕЖИМ (160+)"
             "metric_min" -> "МИН"
             "metric_avg" -> "СРЕДНИЙ"
             "metric_max" -> "МАКС"
             "metric_bat" -> "ЗАРЯД"
-            "graph_title" -> "ГРАФИК ПУЛЬСА"
+            "graph_title" -> "ТЕЛЕМЕТРИЯ ПУЛЬСА"
             "btn_start" -> "▶  СТАРТ МОНИТОРИНГА"
             "btn_stop" -> "⏹  ОСТАНОВИТЬ"
             "btn_history" -> "📜 ИСТОРИЯ"
-            "btn_copy" -> "📋 СКОПИРОВАТЬ ЛОГ"
+            "btn_copy" -> "📋 СИНХРОНИЗАЦИЯ"
             "btn_clear" -> "🗑 ОЧИСТИТЬ"
             "btn_hide_logs" -> "👁 СКРЫТЬ ЛОГИ"
             "btn_show_logs" -> "👁 ПОКАЗАТЬ ЛОГИ"
-            "logs_title" -> "ЖУРНАЛ СОБЫТИЙ (BLE LOGS)"
-            "waiting_data" -> "ОЖИДАНИЕ ДАННЫХ ПУЛЬСА..."
-            "history_title" -> "ИСТОРИЯ СЕССИЙ"
+            "logs_title" -> "ПОТОК СОБЫТИЙ BLE"
+            "waiting_data" -> "ОЖИДАНИЕ СИГНАЛА ПУЛЬСА..."
+            "history_title" -> "АРХИВ СЕССИЙ"
             "history_empty" -> "История пуста.\nЗавершите сессию мониторинга для сохранения!"
             "history_clear" -> "Очистить историю"
             "close" -> "Закрыть"
             "view_graph" -> "Открыть график"
-            "viewing_history" -> "Архивная сессия:"
+            "viewing_history" -> "Архив:"
             "back_to_live" -> "Вернуться к Live"
             "zoom_reset" -> "↺ Сброс зума"
             "toast_copied" -> "✅ Логи скопированы и загружены на сервер!"
@@ -127,7 +129,7 @@ object AppStrings {
     fun formatStatus(raw: String, lang: Lang): String {
         if (lang == Lang.RU) {
             return when {
-                raw.contains("Workout", ignoreCase = true) || raw.contains("Трансляция", ignoreCase = true) -> "Трансляция"
+                raw.contains("Workout", ignoreCase = true) || raw.contains("Трансляция", ignoreCase = true) -> "В эфире"
                 raw.contains("Авторизовано", ignoreCase = true) -> "Авторизовано"
                 raw.contains("Подключение", ignoreCase = true) -> "Подключение..."
                 raw.contains("Опрос", ignoreCase = true) -> "Опрос датчиков..."
@@ -153,11 +155,86 @@ object AppStrings {
 }
 
 /**
+ * Custom vector cyberpunk heart view with dynamic neon glow bloom
+ * and real-time beat pulse animation (zero emoji dependencies).
+ */
+class CyberHeartView @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+    defStyleAttr: Int = 0
+) : View(context, attrs, defStyleAttr) {
+
+    private var isClutch = false
+    private val heartPath = Path()
+
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+
+    private val strokeGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+
+    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+
+    fun setClutch(clutch: Boolean) {
+        if (isClutch != clutch) {
+            isClutch = clutch
+            invalidate()
+        }
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0 || h <= 0) return
+
+        val cx = w / 2f
+        val cy = h / 2f
+        val s = minOf(w, h) / 36f
+
+        heartPath.reset()
+        // Precise parametric/bezier vector heart
+        heartPath.moveTo(cx, cy + 9f * s)
+        heartPath.cubicTo(cx - 13f * s, cy - 2f * s, cx - 15f * s, cy - 13f * s, cx - 7f * s, cy - 13f * s)
+        heartPath.cubicTo(cx - 2f * s, cy - 13f * s, cx, cy - 8f * s, cx, cy - 6f * s)
+        heartPath.cubicTo(cx, cy - 8f * s, cx + 2f * s, cy - 13f * s, cx + 7f * s, cy - 13f * s)
+        heartPath.cubicTo(cx + 15f * s, cy - 13f * s, cx + 13f * s, cy - 2f * s, cx, cy + 9f * s)
+        heartPath.close()
+
+        val mainColor = if (isClutch) Color.parseColor("#FF0055") else Color.parseColor("#FF2D55")
+        val glowColor = if (isClutch) Color.argb(120, 255, 0, 85) else Color.argb(90, 255, 45, 85)
+        val fillColor = if (isClutch) Color.argb(60, 255, 0, 85) else Color.argb(40, 255, 45, 85)
+
+        // 1. Subtle Fill
+        fillPaint.color = fillColor
+        canvas.drawPath(heartPath, fillPaint)
+
+        // 2. Neon Glow Stroke Underlay
+        strokeGlowPaint.color = glowColor
+        strokeGlowPaint.strokeWidth = s * 4.5f
+        canvas.drawPath(heartPath, strokeGlowPaint)
+
+        // 3. Crisp Foreground Neon Line
+        strokePaint.color = mainColor
+        strokePaint.strokeWidth = s * 2.2f
+        canvas.drawPath(heartPath, strokePaint)
+    }
+}
+
+/**
  * Custom live & session heart rate chart view with:
  * - Time range filtering (60s, 5m, 10m, 30m, 1h, All)
- * - Pinch-to-zoom (up to 20x) and horizontal panning gestures
+ * - Pinch-to-zoom (up to 25x) and horizontal panning gestures
  * - Interactive scrubber / touch inspection
- * - Vibrant dual-layer neon glow stroke & high-contrast gradient fill
+ * - Vibrant dual-layer neon beam stroke & high-contrast gradient fill
  */
 class HrChartView @JvmOverloads constructor(
     context: Context,
@@ -175,7 +252,7 @@ class HrChartView @JvmOverloads constructor(
     // Zoom & Pan state
     var zoomScale: Float = 1.0f
         private set
-    private var panRatio: Float = 1.0f // 1.0f means rightmost (latest)
+    private var panRatio: Float = 1.0f
 
     // Touch inspection / Scrubber
     private var touchedX: Float? = null
@@ -201,32 +278,32 @@ class HrChartView @JvmOverloads constructor(
     private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = dpToPx(1f)
-        color = Color.parseColor("#172033")
+        color = Color.parseColor("#151E30")
         pathEffect = DashPathEffect(floatArrayOf(dpToPx(4f), dpToPx(4f)), 0f)
     }
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = dpToPx(9.5f)
         typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-        color = Color.parseColor("#5A6E8C")
+        color = Color.parseColor("#4A5C78")
     }
 
     private val scrubberLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = dpToPx(1.5f)
-        color = Color.parseColor("#38BDF8")
+        color = Color.parseColor("#00F0FF")
         pathEffect = DashPathEffect(floatArrayOf(dpToPx(3f), dpToPx(3f)), 0f)
     }
 
     private val scrubberBadgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        color = Color.parseColor("#0C192E")
+        color = Color.parseColor("#081224")
     }
 
     private val scrubberBadgeStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = dpToPx(1f)
-        color = Color.parseColor("#38BDF8")
+        color = Color.parseColor("#00F0FF")
     }
 
     private val scrubberTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -334,7 +411,6 @@ class HrChartView @JvmOverloads constructor(
         if (event.action == MotionEvent.ACTION_MOVE && !scaleDetector.isInProgress) {
             handleScrubber(event.x)
         } else if (event.action == MotionEvent.ACTION_UP || event.action == MotionEvent.ACTION_CANCEL) {
-            // Keep scrubber visible for 2 seconds or fade
             postDelayed({
                 touchedX = null
                 inspectedBpm = null
@@ -362,14 +438,10 @@ class HrChartView @JvmOverloads constructor(
         postInvalidate()
     }
 
-    /**
-     * Extracts the slice of points according to TimeRange, zoomScale, and panRatio.
-     */
     private fun getVisibleData(): List<Int> {
         val baseList = historicalPoints ?: allSessionPoints
         if (baseList.isEmpty()) return emptyList()
 
-        // 1. Time range filter
         val rangeCount = when (activeRange) {
             TimeRange.SEC_60 -> 60
             TimeRange.MIN_5 -> 300
@@ -385,7 +457,6 @@ class HrChartView @JvmOverloads constructor(
             baseList.takeLast(rangeCount)
         }
 
-        // 2. Zoom & Pan window
         if (zoomScale <= 1.05f || rangeFiltered.size < 10) {
             return rangeFiltered
         }
@@ -414,12 +485,10 @@ class HrChartView @JvmOverloads constructor(
 
         val visibleList = getVisibleData()
 
-        // Dynamic Y scale
         val minBpm = if (visibleList.isEmpty()) 50 else maxOf(40, visibleList.minOrNull()!! - 10)
         val maxBpm = if (visibleList.isEmpty()) 150 else maxOf(130, visibleList.maxOrNull()!! + 10)
         val range = maxOf(30, maxBpm - minBpm)
 
-        // Subtle horizontal grid lines: 60, 90, 120, 150, 180
         val gridLevels = intArrayOf(60, 90, 120, 150, 180)
         for (level in gridLevels) {
             if (level in minBpm..maxBpm) {
@@ -432,7 +501,7 @@ class HrChartView @JvmOverloads constructor(
 
         if (visibleList.isEmpty()) {
             val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.parseColor("#475569")
+                color = Color.parseColor("#4B5B75")
                 textSize = dpToPx(11f)
                 typeface = Typeface.DEFAULT_BOLD
                 textAlign = Paint.Align.CENTER
@@ -445,7 +514,6 @@ class HrChartView @JvmOverloads constructor(
         linePath.reset()
         fillPath.reset()
 
-        // If in 60s live mode and points count < 60, spread as it arrives
         val stepX = if (activeRange == TimeRange.SEC_60 && historicalPoints == null && zoomScale <= 1.05f) {
             if (count < 60) chartW / 59f else chartW / (count - 1).toFloat()
         } else {
@@ -480,43 +548,42 @@ class HrChartView @JvmOverloads constructor(
         val isClutch = latestBpm >= 160
         val lineColor = if (isClutch) Color.parseColor("#FF0055") else Color.parseColor("#FF2D55")
 
-        // 1. High-Contrast Gradient Fill under curve
+        // 1. High-Contrast Gradient Fill
         fillPaint.shader = LinearGradient(
             0f, padT, 0f, padT + chartH,
-            if (isClutch) Color.argb(120, 255, 0, 85) else Color.argb(95, 255, 45, 85),
+            if (isClutch) Color.argb(130, 255, 0, 85) else Color.argb(100, 255, 45, 85),
             Color.TRANSPARENT,
             Shader.TileMode.CLAMP
         )
         canvas.drawPath(fillPath, fillPaint)
 
-        // 2. Neon Glow Bloom Layer (Thick semi-transparent line underneath)
-        glowLinePaint.color = if (isClutch) Color.argb(90, 255, 0, 85) else Color.argb(75, 255, 45, 85)
-        glowLinePaint.strokeWidth = dpToPx(6.5f)
+        // 2. Neon Beam Bloom Underlay
+        glowLinePaint.color = if (isClutch) Color.argb(100, 255, 0, 85) else Color.argb(80, 255, 45, 85)
+        glowLinePaint.strokeWidth = dpToPx(7f)
         canvas.drawPath(linePath, glowLinePaint)
 
-        // 3. Crisp Foreground Neon Stroke
+        // 3. Crisp Foreground Neon Line
         linePaint.color = lineColor
-        linePaint.strokeWidth = dpToPx(2.6f)
+        linePaint.strokeWidth = dpToPx(2.8f)
         canvas.drawPath(linePath, linePaint)
 
-        // 4. Glowing Live Cursor at the end (if not inspecting history)
+        // 4. Glowing Live Cursor at the end
         if (historicalPoints == null && zoomScale <= 1.05f) {
             dotGlowPaint.color = if (isClutch) Color.argb(160, 255, 0, 85) else Color.argb(130, 255, 45, 85)
-            canvas.drawCircle(lastX, lastY, dpToPx(7f), dotGlowPaint)
-            dotGlowPaint.color = if (isClutch) Color.argb(230, 255, 0, 85) else Color.argb(200, 255, 45, 85)
-            canvas.drawCircle(lastX, lastY, dpToPx(4.5f), dotGlowPaint)
-            canvas.drawCircle(lastX, lastY, dpToPx(2.5f), dotPaint)
+            canvas.drawCircle(lastX, lastY, dpToPx(8f), dotGlowPaint)
+            dotGlowPaint.color = if (isClutch) Color.argb(240, 255, 0, 85) else Color.argb(200, 255, 45, 85)
+            canvas.drawCircle(lastX, lastY, dpToPx(5f), dotGlowPaint)
+            canvas.drawCircle(lastX, lastY, dpToPx(2.8f), dotPaint)
         }
 
-        // 5. Scrubber / Inspection Marker (when touched)
+        // 5. Scrubber Tooltip when touched
         if (touchedX != null && inspectedBpm != null) {
             val sx = touchedX!!
             canvas.drawLine(sx, padT, sx, padT + chartH, scrubberLinePaint)
 
-            // Draw floating HUD tooltip badge
             val badgeText = "$inspectedBpm BPM"
-            val badgeW = dpToPx(70f)
-            val badgeH = dpToPx(24f)
+            val badgeW = dpToPx(74f)
+            val badgeH = dpToPx(26f)
             val badgeX = (sx - badgeW / 2f).coerceIn(padL, padL + chartW - badgeW)
             val badgeY = padT + dpToPx(2f)
 
@@ -545,14 +612,14 @@ class MainActivity : AppCompatActivity() {
 
     // Views
     private lateinit var tvAppTitle: TextView
+    private lateinit var tvAppTitleAccent: TextView
     private lateinit var tvAppSub: TextView
     private lateinit var tvStatusBadge: TextView
     private lateinit var btnLangToggle: TextView
 
     private lateinit var heroCard: FrameLayout
     private lateinit var heroGlowAura: View
-    private lateinit var heroCardContent: LinearLayout
-    private lateinit var tvHeartIcon: TextView
+    private lateinit var cyberHeart: CyberHeartView
     private lateinit var tvBpm: TextView
     private lateinit var tvBpmLabel: TextView
 
@@ -628,30 +695,33 @@ class MainActivity : AppCompatActivity() {
                                 tvBpm.setTextColor(Color.parseColor("#FF0055"))
                                 tvBpmLabel.text = AppStrings.get("clutch_label", currentLang)
                                 tvBpmLabel.setTextColor(Color.parseColor("#FF0055"))
+                                cyberHeart.setClutch(true)
                                 updateHeroGlow(isClutch = true, bpm = bpm)
                             }
                             bpm >= 130 -> {
                                 tvBpm.setTextColor(Color.parseColor("#EF4444"))
                                 tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
                                 tvBpmLabel.setTextColor(Color.parseColor("#64748B"))
+                                cyberHeart.setClutch(false)
                                 updateHeroGlow(isClutch = false, bpm = bpm)
                             }
                             bpm >= 100 -> {
                                 tvBpm.setTextColor(Color.parseColor("#F59E0B"))
                                 tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
                                 tvBpmLabel.setTextColor(Color.parseColor("#64748B"))
+                                cyberHeart.setClutch(false)
                                 updateHeroGlow(isClutch = false, bpm = bpm)
                             }
                             else -> {
                                 tvBpm.setTextColor(Color.parseColor("#10B981"))
                                 tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
                                 tvBpmLabel.setTextColor(Color.parseColor("#64748B"))
+                                cyberHeart.setClutch(false)
                                 updateHeroGlow(isClutch = false, bpm = bpm)
                             }
                         }
                         startHeartPulseAnimation(bpm)
 
-                        // If not currently viewing a historical session, update live stats
                         if (!hrChartView.isHistorical()) {
                             if (minBpm == 0 || bpm < minBpm) minBpm = bpm
                             if (bpm > maxBpm) maxBpm = bpm
@@ -664,13 +734,13 @@ class MainActivity : AppCompatActivity() {
                             tvMaxVal.text = maxBpm.toString()
                         }
 
-                        // Add point to chart
                         hrChartView.addPoint(bpm)
                     } else {
                         tvBpm.text = "--"
-                        tvBpm.setTextColor(Color.parseColor("#6B7280"))
+                        tvBpm.setTextColor(Color.parseColor("#4A5C78"))
                         tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
                         tvBpmLabel.setTextColor(Color.parseColor("#64748B"))
+                        cyberHeart.setClutch(false)
                         updateHeroGlow(isClutch = false, bpm = 0)
                         stopHeartPulseAnimation()
                     }
@@ -700,12 +770,12 @@ class MainActivity : AppCompatActivity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#060910"))
-            setPadding(dp(16), dp(18), dp(16), dp(12))
+            setBackgroundColor(Color.parseColor("#050811"))
+            setPadding(dp(16), dp(16), dp(16), dp(12))
         }
 
         // ==========================================
-        // 1. HEADER (Title + Status Pill + Lang Switcher)
+        // 1. HEADER (Title with Neon Accent + Subtitle + Lang + Status Pill)
         // ==========================================
         val headerRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -721,20 +791,49 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
 
+        val titleLine = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
         tvAppTitle = TextView(this).apply {
-            text = "⚡ " + AppStrings.get("app_title", currentLang)
+            text = AppStrings.get("app_title", currentLang)
             textSize = 20f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#FFFFFF"))
+            setTextColor(Color.WHITE)
         }
+
+        tvAppTitleAccent = TextView(this).apply {
+            text = " " + AppStrings.get("app_title_accent", currentLang)
+            textSize = 20f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#00F0FF"))
+        }
+
+        val badgeGd = TextView(this).apply {
+            text = "GD HUD"
+            textSize = 8.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#FF0055"))
+            background = makeDrawable(Color.parseColor("#1A0A16"), radius = dp(6).toFloat(), strokeColor = Color.parseColor("#FF0055"), strokeWidth = dp(1))
+            setPadding(dp(5), dp(2), dp(5), dp(2))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { leftMargin = dp(8) }
+        }
+
+        titleLine.addView(tvAppTitle)
+        titleLine.addView(tvAppTitleAccent)
+        titleLine.addView(badgeGd)
 
         tvAppSub = TextView(this).apply {
             text = AppStrings.get("device_sub", currentLang)
-            textSize = 11.5f
-            setTextColor(Color.parseColor("#64748B"))
+            textSize = 11f
+            setTextColor(Color.parseColor("#5A6E8C"))
         }
 
-        titleBox.addView(tvAppTitle)
+        titleBox.addView(titleLine)
         titleBox.addView(tvAppSub)
 
         btnLangToggle = TextView(this).apply {
@@ -742,7 +841,7 @@ class MainActivity : AppCompatActivity() {
             textSize = 11f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#38BDF8"))
-            background = makeDrawable(Color.parseColor("#111F38"), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#1E3A8A"), strokeWidth = dp(1))
+            background = makeDrawable(Color.parseColor("#0F1B30"), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#1E3A8A"), strokeWidth = dp(1))
             setPadding(dp(10), dp(5), dp(10), dp(5))
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -759,7 +858,7 @@ class MainActivity : AppCompatActivity() {
             textSize = 11f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#94A3B8"))
-            background = makeDrawable(Color.parseColor("#1E2433"), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#2E384D"), strokeWidth = dp(1))
+            background = makeDrawable(Color.parseColor("#141C2E"), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#22304D"), strokeWidth = dp(1))
             setPadding(dp(10), dp(5), dp(10), dp(5))
         }
 
@@ -769,7 +868,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(headerRow)
 
         // ==========================================
-        // 2. HERO CARD (Heart Rate, Authentic Cyber Glow Aura & Mini Stats)
+        // 2. HERO CARD (Heart Rate, Authentic Cyber Glow Aura & Unified Telemetry Bar)
         // ==========================================
         heroCard = FrameLayout(this).apply {
             background = makeHeroCardDrawable(isClutch = false)
@@ -779,91 +878,99 @@ class MainActivity : AppCompatActivity() {
             ).apply { bottomMargin = dp(12) }
         }
 
-        // Dedicated luminous neon glow halo behind the BPM display
         heroGlowAura = View(this).apply {
             background = makeGlowAuraDrawable(isClutch = false, hasBpm = false)
-            layoutParams = FrameLayout.LayoutParams(dp(220), dp(130), Gravity.CENTER)
+            layoutParams = FrameLayout.LayoutParams(dp(240), dp(140), Gravity.CENTER)
         }
         heroCard.addView(heroGlowAura)
 
-        heroCardContent = LinearLayout(this).apply {
+        val heroCardContent = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(16), dp(14), dp(16), dp(12))
+            setPadding(dp(16), dp(16), dp(16), dp(14))
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT
             )
         }
 
-        tvHeartIcon = TextView(this).apply {
-            text = "❤️"
-            textSize = 28f
-            gravity = Gravity.CENTER
+        cyberHeart = CyberHeartView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).apply {
+                bottomMargin = dp(4)
+            }
         }
 
         tvBpm = TextView(this).apply {
             text = "--"
-            textSize = 52f
+            textSize = 56f
+            letterSpacing = -0.02f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#6B7280"))
+            setTextColor(Color.parseColor("#4A5C78"))
             gravity = Gravity.CENTER
         }
 
         tvBpmLabel = TextView(this).apply {
             text = AppStrings.get("bpm_label", currentLang)
-            textSize = 10.5f
-            letterSpacing = 0.15f
+            textSize = 10f
+            letterSpacing = 0.2f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#64748B"))
+            setTextColor(Color.parseColor("#5A6E8C"))
             gravity = Gravity.CENTER
         }
 
-        // Mini metrics row: MIN | AVG | MAX | BATTERY
-        val metricsRow = LinearLayout(this).apply {
+        // Unified Symmetrical Telemetry Bar: MIN | AVG | MAX | BATTERY
+        val telemetryBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(0, dp(12), 0, 0)
+            gravity = Gravity.CENTER_VERTICAL
+            background = makeDrawable(Color.parseColor("#090E1A"), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#152033"), strokeWidth = dp(1))
+            setPadding(dp(6), dp(8), dp(6), dp(8))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(14) }
         }
 
-        val minBadge = createMiniMetric("metric_min", "--", Color.parseColor("#38BDF8")).also {
-            tvMinVal = it.second
-            tvMinLbl = it.third
+        val minBadge = createMetricSegment("metric_min", "--", Color.parseColor("#38BDF8")).also {
+            tvMinVal = it.first
+            tvMinLbl = it.second
         }
-        val avgBadge = createMiniMetric("metric_avg", "--", Color.parseColor("#FCD34D")).also {
-            tvAvgVal = it.second
-            tvAvgLbl = it.third
+        val avgBadge = createMetricSegment("metric_avg", "--", Color.parseColor("#FBBF24")).also {
+            tvAvgVal = it.first
+            tvAvgLbl = it.second
         }
-        val maxBadge = createMiniMetric("metric_max", "--", Color.parseColor("#F43F5E")).also {
-            tvMaxVal = it.second
-            tvMaxLbl = it.third
+        val maxBadge = createMetricSegment("metric_max", "--", Color.parseColor("#F43F5E")).also {
+            tvMaxVal = it.first
+            tvMaxLbl = it.second
         }
-        val batBadge = createMiniMetric("metric_bat", "--%", Color.parseColor("#10B981")).also {
-            tvBatteryVal = it.second
-            tvBatteryLbl = it.third
+        val batBadge = createMetricSegment("metric_bat", "--%", Color.parseColor("#10B981")).also {
+            tvBatteryVal = it.first
+            tvBatteryLbl = it.second
         }
 
-        metricsRow.addView(minBadge.first)
-        metricsRow.addView(avgBadge.first)
-        metricsRow.addView(maxBadge.first)
-        metricsRow.addView(batBadge.first)
+        telemetryBar.addView(minBadge.third)
+        telemetryBar.addView(createVerticalDivider())
+        telemetryBar.addView(avgBadge.third)
+        telemetryBar.addView(createVerticalDivider())
+        telemetryBar.addView(maxBadge.third)
+        telemetryBar.addView(createVerticalDivider())
+        telemetryBar.addView(batBadge.third)
 
-        heroCardContent.addView(tvHeartIcon)
+        heroCardContent.addView(cyberHeart)
         heroCardContent.addView(tvBpm)
         heroCardContent.addView(tvBpmLabel)
-        heroCardContent.addView(metricsRow)
+        heroCardContent.addView(telemetryBar)
         heroCard.addView(heroCardContent)
         root.addView(heroCard)
 
         // ==========================================
-        // 3. GRAPH CARD (Time Range Pills + Zoom Reset + Canvas Chart)
+        // 3. GRAPH CARD (Time Range Pills + Zoom Reset + Oscilloscope Chart)
         // ==========================================
         val graphCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = makeDrawable(
-                bgColor = Color.parseColor("#0C101A"),
+                bgColor = Color.parseColor("#0A0E1A"),
                 radius = dp(18).toFloat(),
-                strokeColor = Color.parseColor("#1A2438"),
+                strokeColor = Color.parseColor("#162035"),
                 strokeWidth = dp(1)
             )
             setPadding(dp(14), dp(10), dp(14), dp(10))
@@ -884,10 +991,10 @@ class MainActivity : AppCompatActivity() {
 
         tvGraphTitle = TextView(this).apply {
             text = "📈 " + AppStrings.get("graph_title", currentLang)
-            textSize = 11f
-            letterSpacing = 0.1f
+            textSize = 10.5f
+            letterSpacing = 0.12f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#94A3B8"))
+            setTextColor(Color.parseColor("#7A8FA8"))
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
 
@@ -895,8 +1002,8 @@ class MainActivity : AppCompatActivity() {
             text = AppStrings.get("zoom_reset", currentLang)
             textSize = 10f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#38BDF8"))
-            background = makeDrawable(Color.parseColor("#0F223D"), radius = dp(8).toFloat(), strokeColor = Color.parseColor("#2563EB"), strokeWidth = dp(1))
+            setTextColor(Color.parseColor("#00F0FF"))
+            background = makeDrawable(Color.parseColor("#0A1C30"), radius = dp(8).toFloat(), strokeColor = Color.parseColor("#00F0FF"), strokeWidth = dp(1))
             setPadding(dp(8), dp(4), dp(8), dp(4))
             visibility = View.GONE
             setOnClickListener {
@@ -926,7 +1033,7 @@ class MainActivity : AppCompatActivity() {
                 text = range.getLabel(currentLang)
                 textSize = 10.5f
                 setTypeface(null, Typeface.BOLD)
-                setPadding(dp(11), dp(5), dp(11), dp(5))
+                setPadding(dp(12), dp(5), dp(12), dp(5))
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
@@ -999,13 +1106,14 @@ class MainActivity : AppCompatActivity() {
         // ==========================================
         btnToggle = Button(this).apply {
             text = AppStrings.get("btn_start", currentLang)
-            textSize = 15f
+            textSize = 14.5f
+            letterSpacing = 0.05f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.WHITE)
             background = makeButtonDrawable(
                 normalColor = Color.parseColor("#10B981"),
                 pressedColor = Color.parseColor("#059669"),
-                radius = dp(16).toFloat()
+                radius = dp(14).toFloat()
             )
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -1022,7 +1130,7 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(btnToggle)
 
-        // Sub-buttons Row: [ 👁 HIDE/SHOW LOGS ] [ 📜 HISTORY ] [ 📋 COPY ] [ 🗑 CLEAR ]
+        // Sub-buttons Toolbar: [ 👁 HIDE/SHOW LOGS ] [ 📜 HISTORY ] [ 📋 SYNC ] [ 🗑 CLEAR ]
         val actionRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
@@ -1033,14 +1141,10 @@ class MainActivity : AppCompatActivity() {
 
         btnHideLogs = Button(this).apply {
             text = AppStrings.get("btn_hide_logs", currentLang)
-            textSize = 11.5f
+            textSize = 11f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#CBD5E1"))
-            background = makeButtonDrawable(
-                normalColor = Color.parseColor("#1E293B"),
-                pressedColor = Color.parseColor("#334155"),
-                radius = dp(12).toFloat()
-            )
+            setTextColor(Color.parseColor("#94A3B8"))
+            background = makeToolbarButtonDrawable()
             layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(5) }
             setOnClickListener {
                 toggleLogsVisibility()
@@ -1049,14 +1153,10 @@ class MainActivity : AppCompatActivity() {
 
         btnHistory = Button(this).apply {
             text = AppStrings.get("btn_history", currentLang)
-            textSize = 11.5f
+            textSize = 11f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#A78BFA"))
-            background = makeButtonDrawable(
-                normalColor = Color.parseColor("#20163B"),
-                pressedColor = Color.parseColor("#2E1F54"),
-                radius = dp(12).toFloat()
-            )
+            setTextColor(Color.parseColor("#C084FC"))
+            background = makeToolbarButtonDrawable()
             layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(5) }
             setOnClickListener {
                 showHistoryDialog()
@@ -1065,14 +1165,10 @@ class MainActivity : AppCompatActivity() {
 
         btnCopy = Button(this).apply {
             text = AppStrings.get("btn_copy", currentLang)
-            textSize = 11.5f
+            textSize = 11f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            background = makeButtonDrawable(
-                normalColor = Color.parseColor("#2563EB"),
-                pressedColor = Color.parseColor("#1D4ED8"),
-                radius = dp(12).toFloat()
-            )
+            setTextColor(Color.parseColor("#60A5FA"))
+            background = makeToolbarButtonDrawable()
             layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(5) }
             setOnClickListener {
                 copyAndUploadLogs()
@@ -1081,14 +1177,10 @@ class MainActivity : AppCompatActivity() {
 
         btnClear = Button(this).apply {
             text = AppStrings.get("btn_clear", currentLang)
-            textSize = 11.5f
+            textSize = 11f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#94A3B8"))
-            background = makeButtonDrawable(
-                normalColor = Color.parseColor("#141A29"),
-                pressedColor = Color.parseColor("#1E273D"),
-                radius = dp(12).toFloat()
-            )
+            setTextColor(Color.parseColor("#64748B"))
+            background = makeToolbarButtonDrawable()
             layoutParams = LinearLayout.LayoutParams(0, dp(40), 0.9f)
             setOnClickListener {
                 tvLogs.text = ""
@@ -1114,16 +1206,16 @@ class MainActivity : AppCompatActivity() {
 
         tvConsoleTitle = TextView(this).apply {
             text = AppStrings.get("logs_title", currentLang)
-            textSize = 10.5f
-            letterSpacing = 0.1f
+            textSize = 10f
+            letterSpacing = 0.12f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#64748B"))
+            setTextColor(Color.parseColor("#5A6E8C"))
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
 
         val tvLiveDot = TextView(this).apply {
             text = "● LIVE"
-            textSize = 10.5f
+            textSize = 10f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#10B981"))
         }
@@ -1134,9 +1226,9 @@ class MainActivity : AppCompatActivity() {
 
         consoleCard = FrameLayout(this).apply {
             background = makeDrawable(
-                bgColor = Color.parseColor("#05070C"),
+                bgColor = Color.parseColor("#04070D"),
                 radius = dp(14).toFloat(),
-                strokeColor = Color.parseColor("#141926"),
+                strokeColor = Color.parseColor("#121926"),
                 strokeWidth = dp(1)
             )
             setPadding(dp(10), dp(8), dp(10), dp(8))
@@ -1154,7 +1246,7 @@ class MainActivity : AppCompatActivity() {
 
         tvLogs = TextView(this).apply {
             setTextColor(Color.parseColor("#34D399"))
-            textSize = 10.5f
+            textSize = 10f
             setTypeface(Typeface.MONOSPACE)
             setLineSpacing(dp(2).toFloat(), 1f)
             text = "[PulseBridge] Ready. Press Start to connect.\n"
@@ -1199,7 +1291,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyTranslations() {
         btnLangToggle.text = if (currentLang == Lang.EN) "🇺🇸 EN" else "🇷🇺 RU"
-        tvAppTitle.text = "⚡ " + AppStrings.get("app_title", currentLang)
+        tvAppTitle.text = AppStrings.get("app_title", currentLang)
+        tvAppTitleAccent.text = " " + AppStrings.get("app_title_accent", currentLang)
         tvAppSub.text = AppStrings.get("device_sub", currentLang)
         tvBpmLabel.text = if (tvBpmLabel.text.toString().contains("КЛАТЧ") || tvBpmLabel.text.toString().contains("CLUTCH")) {
             AppStrings.get("clutch_label", currentLang)
@@ -1252,11 +1345,11 @@ class MainActivity : AppCompatActivity() {
                     strokeWidth = dp(1)
                 )
             } else {
-                btn.setTextColor(Color.parseColor("#64748B"))
+                btn.setTextColor(Color.parseColor("#5A6E8C"))
                 btn.background = makeDrawable(
-                    Color.parseColor("#0F1422"),
+                    Color.parseColor("#0C1220"),
                     radius = dp(10).toFloat(),
-                    strokeColor = Color.parseColor("#1C263B"),
+                    strokeColor = Color.parseColor("#162035"),
                     strokeWidth = dp(1)
                 )
             }
@@ -1272,12 +1365,12 @@ class MainActivity : AppCompatActivity() {
             consoleHeader.visibility = View.VISIBLE
             consoleCard.visibility = View.VISIBLE
             btnHideLogs.text = AppStrings.get("btn_hide_logs", currentLang)
-            btnHideLogs.setTextColor(Color.parseColor("#CBD5E1"))
+            btnHideLogs.setTextColor(Color.parseColor("#94A3B8"))
         } else {
             consoleHeader.visibility = View.GONE
             consoleCard.visibility = View.GONE
             btnHideLogs.text = AppStrings.get("btn_show_logs", currentLang)
-            btnHideLogs.setTextColor(Color.parseColor("#38BDF8"))
+            btnHideLogs.setTextColor(Color.parseColor("#00F0FF"))
         }
     }
 
@@ -1370,9 +1463,9 @@ class MainActivity : AppCompatActivity() {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = makeDrawable(
-                bgColor = Color.parseColor("#0A0E18"),
+                bgColor = Color.parseColor("#080D18"),
                 radius = dp(20).toFloat(),
-                strokeColor = Color.parseColor("#1E2A42"),
+                strokeColor = Color.parseColor("#1B273F"),
                 strokeWidth = dp(1)
             )
             setPadding(dp(18), dp(18), dp(18), dp(16))
@@ -1412,7 +1505,7 @@ class MainActivity : AppCompatActivity() {
             val tvEmpty = TextView(this).apply {
                 text = AppStrings.get("history_empty", currentLang)
                 textSize = 12.5f
-                setTextColor(Color.parseColor("#64748B"))
+                setTextColor(Color.parseColor("#5A6E8C"))
                 gravity = Gravity.CENTER
                 setPadding(dp(12), dp(24), dp(12), dp(24))
             }
@@ -1432,9 +1525,9 @@ class MainActivity : AppCompatActivity() {
                 val card = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     background = makeDrawable(
-                        bgColor = Color.parseColor("#111726"),
+                        bgColor = Color.parseColor("#0E1422"),
                         radius = dp(12).toFloat(),
-                        strokeColor = Color.parseColor("#1B253D"),
+                        strokeColor = Color.parseColor("#182236"),
                         strokeWidth = dp(1)
                     )
                     setPadding(dp(12), dp(10), dp(12), dp(10))
@@ -1577,7 +1670,7 @@ class MainActivity : AppCompatActivity() {
         tvStatusBadge.text = "● $localized"
 
         when {
-            localized.contains("Streaming", true) || localized.contains("Трансляция", true) || localized.contains("Authorized", true) || localized.contains("Авторизовано", true) -> {
+            localized.contains("Streaming", true) || localized.contains("эфире", true) || localized.contains("Authorized", true) || localized.contains("Авторизовано", true) -> {
                 tvStatusBadge.setTextColor(Color.parseColor("#10B981"))
                 tvStatusBadge.background = makeDrawable(Color.parseColor("#063321"), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#10B981"), strokeWidth = dp(1))
             }
@@ -1591,7 +1684,7 @@ class MainActivity : AppCompatActivity() {
             }
             else -> {
                 tvStatusBadge.setTextColor(Color.parseColor("#94A3B8"))
-                tvStatusBadge.background = makeDrawable(Color.parseColor("#1E2433"), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#2E384D"), strokeWidth = dp(1))
+                tvStatusBadge.background = makeDrawable(Color.parseColor("#141C2E"), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#22304D"), strokeWidth = dp(1))
             }
         }
     }
@@ -1606,9 +1699,9 @@ class MainActivity : AppCompatActivity() {
         if (heartAnimator != null && heartAnimator?.duration == durationMs) return
         heartAnimator?.cancel()
         heartAnimator = ObjectAnimator.ofPropertyValuesHolder(
-            tvHeartIcon,
-            PropertyValuesHolder.ofFloat("scaleX", 1f, 1.28f, 1f),
-            PropertyValuesHolder.ofFloat("scaleY", 1f, 1.28f, 1f)
+            cyberHeart,
+            PropertyValuesHolder.ofFloat("scaleX", 1f, 1.25f, 1f),
+            PropertyValuesHolder.ofFloat("scaleY", 1f, 1.25f, 1f)
         ).apply {
             duration = durationMs
             repeatCount = ValueAnimator.INFINITE
@@ -1619,11 +1712,11 @@ class MainActivity : AppCompatActivity() {
     private fun stopHeartPulseAnimation() {
         heartAnimator?.cancel()
         heartAnimator = null
-        tvHeartIcon.scaleX = 1f
-        tvHeartIcon.scaleY = 1f
+        cyberHeart.scaleX = 1f
+        cyberHeart.scaleY = 1f
     }
 
-    private fun createMiniMetric(labelKey: String, initialVal: String, valColor: Int): Triple<LinearLayout, TextView, TextView> {
+    private fun createMetricSegment(labelKey: String, initialVal: String, valColor: Int): Triple<TextView, TextView, LinearLayout> {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -1637,12 +1730,20 @@ class MainActivity : AppCompatActivity() {
         }
         val tvLbl = TextView(this).apply {
             text = AppStrings.get(labelKey, currentLang)
-            textSize = 9.5f
-            setTextColor(Color.parseColor("#64748B"))
+            textSize = 9f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#5A6E8C"))
         }
         box.addView(tvVal)
         box.addView(tvLbl)
-        return Triple(box, tvVal, tvLbl)
+        return Triple(tvVal, tvLbl, box)
+    }
+
+    private fun createVerticalDivider(): View {
+        return View(this).apply {
+            setBackgroundColor(Color.parseColor("#152033"))
+            layoutParams = LinearLayout.LayoutParams(dp(1), dp(22))
+        }
     }
 
     private fun checkPermsAndStart() {
@@ -1678,7 +1779,7 @@ class MainActivity : AppCompatActivity() {
         btnToggle.background = makeButtonDrawable(
             normalColor = Color.parseColor("#EF4444"),
             pressedColor = Color.parseColor("#DC2626"),
-            radius = dp(16).toFloat()
+            radius = dp(14).toFloat()
         )
         val intent = Intent(this, PulseBleService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -1695,14 +1796,15 @@ class MainActivity : AppCompatActivity() {
         btnToggle.background = makeButtonDrawable(
             normalColor = Color.parseColor("#10B981"),
             pressedColor = Color.parseColor("#059669"),
-            radius = dp(16).toFloat()
+            radius = dp(14).toFloat()
         )
         stopService(Intent(this, PulseBleService::class.java))
         updateStatusBadge("Остановлено")
         tvBpm.text = "--"
-        tvBpm.setTextColor(Color.parseColor("#6B7280"))
+        tvBpm.setTextColor(Color.parseColor("#4A5C78"))
         tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
-        tvBpmLabel.setTextColor(Color.parseColor("#64748B"))
+        tvBpmLabel.setTextColor(Color.parseColor("#5A6E8C"))
+        cyberHeart.setClutch(false)
         updateHeroGlow(isClutch = false, bpm = 0)
         stopHeartPulseAnimation()
     }
@@ -1726,46 +1828,40 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Card background with dark glass & glowing neon borders.
-     */
     private fun makeHeroCardDrawable(isClutch: Boolean): GradientDrawable {
         return GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = dp(20).toFloat()
             if (isClutch) {
-                setColor(Color.parseColor("#180B15"))
+                setColor(Color.parseColor("#160A14"))
                 setStroke(dp(2), Color.parseColor("#FF0055"))
             } else {
-                setColor(Color.parseColor("#0C111E"))
-                setStroke(dp(1), Color.parseColor("#1E2B44"))
+                setColor(Color.parseColor("#090E1A"))
+                setStroke(dp(1), Color.parseColor("#1A263D"))
             }
         }
     }
 
-    /**
-     * Radial neon bloom aura behind the heart and BPM.
-     */
     private fun makeGlowAuraDrawable(isClutch: Boolean, hasBpm: Boolean): GradientDrawable {
         return GradientDrawable().apply {
             gradientType = GradientDrawable.RADIAL_GRADIENT
             gradientRadius = dp(140).toFloat()
             if (!hasBpm) {
                 setColors(intArrayOf(
-                    Color.argb(35, 56, 189, 248),
-                    Color.argb(10, 56, 189, 248),
+                    Color.argb(40, 0, 240, 255),
+                    Color.argb(10, 0, 240, 255),
                     Color.TRANSPARENT
                 ))
             } else if (isClutch) {
                 setColors(intArrayOf(
-                    Color.argb(140, 255, 0, 85),
-                    Color.argb(50, 255, 0, 85),
+                    Color.argb(150, 255, 0, 85),
+                    Color.argb(55, 255, 0, 85),
                     Color.TRANSPARENT
                 ))
             } else {
                 setColors(intArrayOf(
-                    Color.argb(90, 255, 45, 85),
-                    Color.argb(30, 255, 45, 85),
+                    Color.argb(95, 255, 45, 85),
+                    Color.argb(32, 255, 45, 85),
                     Color.TRANSPARENT
                 ))
             }
@@ -1775,6 +1871,15 @@ class MainActivity : AppCompatActivity() {
     private fun makeButtonDrawable(normalColor: Int, pressedColor: Int, radius: Float): StateListDrawable {
         val normal = makeDrawable(normalColor, radius)
         val pressed = makeDrawable(pressedColor, radius)
+        return StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_pressed), pressed)
+            addState(intArrayOf(), normal)
+        }
+    }
+
+    private fun makeToolbarButtonDrawable(): StateListDrawable {
+        val normal = makeDrawable(Color.parseColor("#0D1422"), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#182236"), strokeWidth = dp(1))
+        val pressed = makeDrawable(Color.parseColor("#152033"), radius = dp(12).toFloat(), strokeColor = Color.parseColor("#253654"), strokeWidth = dp(1))
         return StateListDrawable().apply {
             addState(intArrayOf(android.R.attr.state_pressed), pressed)
             addState(intArrayOf(), normal)
