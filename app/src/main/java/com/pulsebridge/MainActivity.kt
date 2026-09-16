@@ -19,6 +19,7 @@ import android.util.TypedValue
 import android.view.*
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.AppCompatButton
 import androidx.core.app.ActivityCompat
 import org.json.JSONArray
 import org.json.JSONObject
@@ -71,7 +72,7 @@ object AppStrings {
             "metric_bat" -> "BATTERY"
             "graph_title" -> "REAL-TIME TELEMETRY"
             "btn_start" -> "▶  START MONITORING"
-            "btn_stop" -> "⏹  STOP MONITORING"
+            "btn_stop" -> "■  STOP MONITORING"
             "btn_history" -> "📜 HISTORY"
             "btn_copy" -> "📋 SYNC LOGS"
             "btn_clear" -> "🗑 CLEAR"
@@ -106,7 +107,7 @@ object AppStrings {
             "metric_bat" -> "ЗАРЯД"
             "graph_title" -> "ТЕЛЕМЕТРИЯ ПУЛЬСА"
             "btn_start" -> "▶  СТАРТ МОНИТОРИНГА"
-            "btn_stop" -> "⏹  ОСТАНОВИТЬ"
+            "btn_stop" -> "■  ОСТАНОВИТЬ"
             "btn_history" -> "📜 ИСТОРИЯ"
             "btn_copy" -> "📋 СИНХРОНИЗАЦИЯ"
             "btn_clear" -> "🗑 ОЧИСТИТЬ"
@@ -638,41 +639,81 @@ class HrChartView @JvmOverloads constructor(
         }
 
         // 5. Bottom X-Axis Timestamps with exact seconds
-        if (visibleTimes.size >= 2) {
-            val numLabels = when {
-                chartW < dpToPx(240f) -> 2
-                chartW < dpToPx(340f) -> 3
-                else -> 4
-            }
-
-            val isGrowingSec60 = (activeRange == TimeRange.SEC_60 && historicalPoints == null && zoomScale <= 1.05f && count < 60)
-            val effectiveLabels = if (isGrowingSec60 && count < 8) 2 else numLabels
-
+        if (visibleTimes.isNotEmpty()) {
             val axisY = h - dpToPx(6f)
             val tickTop = padT + chartH
             val tickBottom = tickTop + dpToPx(3f)
 
-            for (k in 0 until effectiveLabels) {
-                val idx = (k * (count - 1).toFloat() / (effectiveLabels - 1)).roundToInt().coerceIn(0, count - 1)
-                val posX = padL + idx * stepX
-                val timeMs = visibleTimes[idx]
-                val timeStr = timeFormatAxis.format(Date(timeMs))
+            val isLiveGrowing = (activeRange == TimeRange.SEC_60 && historicalPoints == null && zoomScale <= 1.05f && count < 60)
 
-                canvas.drawLine(posX, tickTop, posX, tickBottom, gridPaint)
+            if (isLiveGrowing) {
+                // Live session starting: full 60s window across chartW.
+                // Spaced evenly across chartW so they NEVER collide!
+                val t0 = visibleTimes.first()
+                val numLabels = when {
+                    chartW < dpToPx(240f) -> 2
+                    chartW < dpToPx(340f) -> 3
+                    else -> 4
+                }
 
-                when (k) {
-                    0 -> {
-                        timestampPaint.textAlign = Paint.Align.LEFT
-                        canvas.drawText(timeStr, posX, axisY, timestampPaint)
+                for (k in 0 until numLabels) {
+                    val ratio = k.toFloat() / (numLabels - 1)
+                    val posX = padL + ratio * chartW
+                    val timeMs = t0 + (ratio * 59_000L).toLong()
+                    val timeStr = timeFormatAxis.format(Date(timeMs))
+
+                    canvas.drawLine(posX, tickTop, posX, tickBottom, gridPaint)
+
+                    when (k) {
+                        0 -> {
+                            timestampPaint.textAlign = Paint.Align.LEFT
+                            canvas.drawText(timeStr, posX, axisY, timestampPaint)
+                        }
+                        numLabels - 1 -> {
+                            timestampPaint.textAlign = Paint.Align.RIGHT
+                            canvas.drawText(timeStr, posX, axisY, timestampPaint)
+                        }
+                        else -> {
+                            timestampPaint.textAlign = Paint.Align.CENTER
+                            canvas.drawText(timeStr, posX, axisY, timestampPaint)
+                        }
                     }
-                    effectiveLabels - 1 -> {
-                        timestampPaint.textAlign = Paint.Align.RIGHT
-                        canvas.drawText(timeStr, posX, axisY, timestampPaint)
+                }
+            } else if (visibleTimes.size >= 2) {
+                val numLabels = when {
+                    chartW < dpToPx(240f) -> 2
+                    chartW < dpToPx(340f) -> 3
+                    else -> 4
+                }
+
+                var lastDrawnX = -1000f
+
+                for (k in 0 until numLabels) {
+                    val idx = (k * (count - 1).toFloat() / (numLabels - 1)).roundToInt().coerceIn(0, count - 1)
+                    val posX = padL + idx * stepX
+                    val timeMs = visibleTimes[idx]
+                    val timeStr = timeFormatAxis.format(Date(timeMs))
+
+                    // Anti-collision guard: skip if too close to previous label
+                    if (k > 0 && posX - lastDrawnX < dpToPx(65f)) continue
+
+                    canvas.drawLine(posX, tickTop, posX, tickBottom, gridPaint)
+
+                    when (k) {
+                        0 -> {
+                            timestampPaint.textAlign = Paint.Align.LEFT
+                            canvas.drawText(timeStr, posX, axisY, timestampPaint)
+                        }
+                        numLabels - 1 -> {
+                            timestampPaint.textAlign = Paint.Align.RIGHT
+                            canvas.drawText(timeStr, posX, axisY, timestampPaint)
+                        }
+                        else -> {
+                            timestampPaint.textAlign = Paint.Align.CENTER
+                            canvas.drawText(timeStr, posX, axisY, timestampPaint)
+                        }
                     }
-                    else -> {
-                        timestampPaint.textAlign = Paint.Align.CENTER
-                        canvas.drawText(timeStr, posX, axisY, timestampPaint)
-                    }
+                    lastDrawnX = posX
                 }
             }
         }
@@ -703,6 +744,119 @@ class HrChartView @JvmOverloads constructor(
             resources.displayMetrics
         )
     }
+}
+
+/**
+ * Modern animated iridescent gradient button with flowing shimmer effect.
+ * When monitoring is running, switches to a sleek dark cyberpunk wine/crimson aesthetic.
+ */
+class ShimmerGradientButton @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+    defStyleAttr: Int = 0
+) : AppCompatButton(context, attrs, defStyleAttr) {
+
+    var isRunningState: Boolean = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    private var gradientOffset = 0f
+    private var animator: ValueAnimator? = null
+
+    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+    }
+    private val rectF = RectF()
+
+    // Flowing animated gradient: Deep Violet -> Electric Purple -> Magenta -> Indigo -> Deep Violet
+    private val startColors = intArrayOf(
+        Color.parseColor("#7C3AED"),
+        Color.parseColor("#9333EA"),
+        Color.parseColor("#C026D3"),
+        Color.parseColor("#4F46E5"),
+        Color.parseColor("#7C3AED")
+    )
+    private val startPositions = floatArrayOf(0f, 0.25f, 0.5f, 0.75f, 1f)
+
+    // Dark wine / plum gradient for STOP state (elegant, dark, non-intrusive)
+    private val stopColors = intArrayOf(
+        Color.parseColor("#341223"),
+        Color.parseColor("#1F0A15")
+    )
+
+    init {
+        background = null
+        setTextColor(Color.WHITE)
+        textSize = 14.5f
+        letterSpacing = 0.05f
+        setTypeface(null, Typeface.BOLD)
+
+        animator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 3500L
+            repeatCount = ValueAnimator.INFINITE
+            repeatMode = ValueAnimator.RESTART
+            addUpdateListener {
+                gradientOffset = it.animatedValue as Float
+                if (!isRunningState) {
+                    invalidate()
+                }
+            }
+            start()
+        }
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0 || h <= 0) return
+
+        val inset = dpToPx(1f)
+        rectF.set(inset, inset, w - inset, h - inset)
+        val cornerRadius = dpToPx(14f)
+
+        if (!isRunningState) {
+            // Silky flowing iridescent gradient
+            val shift = gradientOffset * w
+            bgPaint.shader = LinearGradient(
+                -w + shift, 0f, w + shift, h,
+                startColors,
+                startPositions,
+                Shader.TileMode.REPEAT
+            )
+            canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, bgPaint)
+
+            strokePaint.strokeWidth = dpToPx(1.2f)
+            strokePaint.color = Color.parseColor("#C084FC")
+            canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, strokePaint)
+        } else {
+            // Sleek dark cyberpunk wine button
+            bgPaint.shader = LinearGradient(
+                0f, 0f, w, h,
+                stopColors,
+                null,
+                Shader.TileMode.CLAMP
+            )
+            canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, bgPaint)
+
+            strokePaint.strokeWidth = dpToPx(1.5f)
+            strokePaint.color = Color.parseColor("#E11D48")
+            canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, strokePaint)
+        }
+
+        super.onDraw(canvas)
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        animator?.cancel()
+    }
+
+    private fun dpToPx(dp: Float): Float = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_DIP, dp, resources.displayMetrics
+    )
 }
 
 class MainActivity : AppCompatActivity() {
@@ -744,7 +898,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvHistoricalInfo: TextView
     private lateinit var btnHistoricalClose: TextView
 
-    private lateinit var btnToggle: Button
+    private lateinit var btnToggle: ShimmerGradientButton
     private lateinit var btnHideLogs: Button
     private lateinit var btnHistory: Button
     private lateinit var btnCopy: Button
@@ -1058,19 +1212,8 @@ class MainActivity : AppCompatActivity() {
         // ==========================================
         // 4. ACTION BUTTONS & CONTROLS
         // ==========================================
-        btnToggle = Button(this).apply {
+        btnToggle = ShimmerGradientButton(this).apply {
             text = AppStrings.get("btn_start", currentLang)
-            textSize = 14.5f
-            letterSpacing = 0.05f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            background = makeGradientButtonDrawable(
-                colors = intArrayOf(Color.parseColor("#9333EA"), Color.parseColor("#6366F1")),
-                pressedColors = intArrayOf(Color.parseColor("#7E22CE"), Color.parseColor("#4F46E5")),
-                radius = dp(14).toFloat(),
-                strokeColor = Color.parseColor("#C084FC"),
-                strokeWidth = dp(1)
-            )
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 dp(48)
@@ -1400,6 +1543,7 @@ class MainActivity : AppCompatActivity() {
         tvGraphTitle.text = "📈 " + AppStrings.get("graph_title", currentLang)
         btnResetZoom.text = AppStrings.get("zoom_reset", currentLang)
 
+        btnToggle.isRunningState = isRunning
         btnToggle.text = if (isRunning) AppStrings.get("btn_stop", currentLang) else AppStrings.get("btn_start", currentLang)
         btnHideLogs.text = if (isLogsVisible) AppStrings.get("btn_hide_logs", currentLang) else AppStrings.get("btn_show_logs", currentLang)
         btnHistory.text = AppStrings.get("btn_history", currentLang)
@@ -1861,14 +2005,8 @@ class MainActivity : AppCompatActivity() {
     private fun startBridgeService() {
         isRunning = true
         sessionStartTimeMs = System.currentTimeMillis()
+        btnToggle.isRunningState = true
         btnToggle.text = AppStrings.get("btn_stop", currentLang)
-        btnToggle.background = makeGradientButtonDrawable(
-            colors = intArrayOf(Color.parseColor("#FF0055"), Color.parseColor("#DC2626")),
-            pressedColors = intArrayOf(Color.parseColor("#CC0044"), Color.parseColor("#991B1B")),
-            radius = dp(14).toFloat(),
-            strokeColor = Color.parseColor("#FF4D79"),
-            strokeWidth = dp(1)
-        )
         val intent = Intent(this, PulseBleService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)
@@ -1880,14 +2018,8 @@ class MainActivity : AppCompatActivity() {
     private fun stopBridgeService() {
         isRunning = false
         saveCurrentSession()
+        btnToggle.isRunningState = false
         btnToggle.text = AppStrings.get("btn_start", currentLang)
-        btnToggle.background = makeGradientButtonDrawable(
-            colors = intArrayOf(Color.parseColor("#9333EA"), Color.parseColor("#6366F1")),
-            pressedColors = intArrayOf(Color.parseColor("#7E22CE"), Color.parseColor("#4F46E5")),
-            radius = dp(14).toFloat(),
-            strokeColor = Color.parseColor("#C084FC"),
-            strokeWidth = dp(1)
-        )
         stopService(Intent(this, PulseBleService::class.java))
         updateStatusBadge("Остановлено")
         tvBpm.text = "--"
