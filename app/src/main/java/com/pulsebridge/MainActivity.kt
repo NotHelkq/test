@@ -193,7 +193,7 @@ class PulseGlyphView @JvmOverloads constructor(
         activeColor = when {
             bpm <= 0 -> Color.parseColor("#4A2574")
             clutch -> Color.parseColor("#FF0055")
-            bpm >= 135 -> Color.parseColor("#EF4444")
+            bpm >= 130 -> Color.parseColor("#EF4444")
             bpm >= 110 -> Color.parseColor("#F59E0B")
             else -> Color.parseColor("#10B981")
         }
@@ -954,16 +954,16 @@ class MainActivity : AppCompatActivity() {
                     if (bpm > 0) {
                         tvBpm.text = bpm.toString()
 
-                        // Color zones: <110 Green, 110-134 Orange, 135-159 Red, 160+ Clutch
+                        // Color zones: <110 Green, 110-129 Orange, 130-149 Red, 150+ Clutch
                         when {
-                            bpm >= 160 -> {
+                            bpm >= 150 -> {
                                 tvBpm.setTextColor(Color.parseColor("#FF0055"))
                                 tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
                                 tvBpmLabel.setTextColor(Color.parseColor("#64748B"))
                                 pulseGlyph.setStatus(true, bpm)
                                 updateHeroGlow(isClutch = true, bpm = bpm)
                             }
-                            bpm >= 135 -> {
+                            bpm >= 130 -> {
                                 tvBpm.setTextColor(Color.parseColor("#EF4444"))
                                 tvBpmLabel.text = AppStrings.get("bpm_label", currentLang)
                                 tvBpmLabel.setTextColor(Color.parseColor("#64748B"))
