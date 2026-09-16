@@ -372,15 +372,17 @@ class HrChartView @JvmOverloads constructor(
         })
     }
 
-    fun addPoint(bpm: Int) {
+    fun addPoint(bpm: Int, timestampMs: Long = System.currentTimeMillis()) {
         if (bpm <= 0) return
         allSessionPoints.add(bpm)
+        allSessionTimestamps.add(timestampMs)
         postInvalidate()
     }
 
     fun setTimeRange(range: TimeRange) {
         activeRange = range
         historicalPoints = null
+        historicalTimestamps = null
         resetZoom()
         postInvalidate()
     }
@@ -390,18 +392,27 @@ class HrChartView @JvmOverloads constructor(
         panRatio = 1.0f
         touchedX = null
         inspectedBpm = null
+        inspectedTimeMs = null
         onZoomChangedListener?.invoke(false, 1.0f)
         postInvalidate()
     }
 
-    fun showHistorical(points: List<Int>) {
+    fun showHistorical(points: List<Int>, timestamps: List<Long>? = null) {
         historicalPoints = points
+        historicalTimestamps = timestamps ?: run {
+            val now = System.currentTimeMillis()
+            val start = now - points.size * 1000L
+            points.indices.map { start + it * 1000L }
+        }
+        activeRange = TimeRange.ALL
         resetZoom()
         postInvalidate()
     }
 
     fun returnToLive() {
         historicalPoints = null
+        historicalTimestamps = null
+        activeRange = TimeRange.SEC_60
         resetZoom()
         postInvalidate()
     }
@@ -410,12 +421,15 @@ class HrChartView @JvmOverloads constructor(
 
     fun clear() {
         allSessionPoints.clear()
+        allSessionTimestamps.clear()
         historicalPoints = null
+        historicalTimestamps = null
         resetZoom()
         postInvalidate()
     }
 
-    fun getSessionPoints(): List<Int> = allSessionPoints.toList()
+    fun getSessionPoints(): List<Int> = ArrayList(allSessionPoints)
+    fun getSessionTimestamps(): List<Long> = ArrayList(allSessionTimestamps)
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
