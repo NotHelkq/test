@@ -90,6 +90,22 @@ object AppStrings {
             "toast_copied" -> "✅ Logs copied & uploaded to server!"
             "toast_cleared" -> "🗑 Session stats and logs cleared"
             "toast_history_cleared" -> "🗑 Session history cleared"
+            "tab_telemetry" -> "💓 TELEMETRY"
+            "tab_activity" -> "🏃 ACTIVITY"
+            "act_steps_title" -> "DAILY MOVEMENT & STEPS"
+            "act_steps_goal" -> "Goal: 10,000 steps"
+            "act_steps_lbl" -> "steps"
+            "act_calories" -> "🔥 Calories"
+            "act_distance" -> "📍 Distance"
+            "act_device_title" -> "BAND 9 ACTIVE HARDWARE"
+            "act_device_name" -> "Xiaomi Smart Band 9 Active"
+            "act_device_sub" -> "MAC: 24:B2:31:75:87:50 • BLE v2"
+            "act_battery_title" -> "BATTERY LEVEL"
+            "act_session_title" -> "CURRENT SESSION UPTIME"
+            "act_session_sub" -> "Continuous sensor streaming"
+            "act_hr_summary" -> "Heart Rate Summary"
+            "act_widgets_title" -> "📱 DESKTOP WIDGETS"
+            "act_widgets_desc" -> "2 interactive home screen widgets available:\n• Compact (2×2): real-time BPM, active zone, battery %\n• Expanded (4×2): telemetry, steps, stats + 1-tap Start/Stop\n\nLong-press home screen -> Widgets -> PulseBridge"
             else -> key
         }
         Lang.RU -> when (key) {
@@ -124,6 +140,22 @@ object AppStrings {
             "toast_copied" -> "✅ Логи скопированы и загружены на сервер!"
             "toast_cleared" -> "🗑 Статистика и логи очищены"
             "toast_history_cleared" -> "🗑 История сессий очищена"
+            "tab_telemetry" -> "💓 ТЕЛЕМЕТРИЯ"
+            "tab_activity" -> "🏃 АКТИВНОСТЬ"
+            "act_steps_title" -> "ДНЕВНАЯ АКТИВНОСТЬ И ШАГИ"
+            "act_steps_goal" -> "Цель: 10 000 шагов"
+            "act_steps_lbl" -> "шагов"
+            "act_calories" -> "🔥 Калории"
+            "act_distance" -> "📍 Дистанция"
+            "act_device_title" -> "ОБОРУДОВАНИЕ БРАСЛЕТА"
+            "act_device_name" -> "Xiaomi Smart Band 9 Active"
+            "act_device_sub" -> "MAC: 24:B2:31:75:87:50 • BLE v2"
+            "act_battery_title" -> "УРОВЕНЬ ЗАРЯДА"
+            "act_session_title" -> "ХРОНОМЕТРАЖ СЕССИИ"
+            "act_session_sub" -> "Непрерывная трансляция сенсора"
+            "act_hr_summary" -> "Сводка пульса"
+            "act_widgets_title" -> "📱 ВИДЖЕТЫ НА РАБОЧИЙ СТОЛ"
+            "act_widgets_desc" -> "Доступны 2 интерактивных виджета для рабочего стола:\n• Компактный (2×2): живой пульс, цвет зоны, батарея %\n• Расширенный (4×2): телеметрия, шаги, статистика + Старт/Стоп\n\nЗажмите рабочий стол -> Виджеты -> PulseBridge"
             else -> key
         }
     }
@@ -882,6 +914,50 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvStatusBadge: TextView
     private lateinit var btnLangToggle: TextView
 
+    // Tab Navigation & Containers
+    private lateinit var tabRow: LinearLayout
+    private lateinit var tabTelemetry: TextView
+    private lateinit var tabActivity: TextView
+    private lateinit var telemetryContainer: LinearLayout
+    private lateinit var activityContainer: LinearLayout
+    private var isActivityTabActive = false
+
+    // Activity Tab Views
+    private lateinit var tvActStepsTitle: TextView
+    private lateinit var tvActStepsGoal: TextView
+    private lateinit var tvActStepsVal: TextView
+    private lateinit var tvActStepsLbl: TextView
+    private lateinit var barStepsFill: View
+    private lateinit var barStepsEmpty: View
+    private lateinit var tvActCalLbl: TextView
+    private lateinit var tvActCalVal: TextView
+    private lateinit var tvActDistLbl: TextView
+    private lateinit var tvActDistVal: TextView
+
+    private lateinit var tvActDeviceTitle: TextView
+    private lateinit var tvActDeviceName: TextView
+    private lateinit var tvActDeviceSub: TextView
+    private lateinit var tvActStatusBadge: TextView
+    private lateinit var tvActBatTitle: TextView
+    private lateinit var tvActBatVal: TextView
+    private lateinit var barBatteryFill: View
+    private lateinit var barBatteryEmpty: View
+
+    private lateinit var tvActSessionTitle: TextView
+    private lateinit var tvActUptimeVal: TextView
+    private lateinit var tvActUptimeSub: TextView
+    private lateinit var tvActSummaryTitle: TextView
+    private lateinit var tvActSummaryVal: TextView
+
+    private lateinit var tvActWidgetTitle: TextView
+    private lateinit var tvActWidgetDesc: TextView
+
+    // Activity Metric State
+    private var lastRecordedSteps: Int = 0
+    private var lastRecordedCalories: Int = 0
+    private var lastRecordedDistanceKm: Float = 0f
+    private var uptimeTimerJob: Job? = null
+
     private lateinit var heroCard: FrameLayout
         private lateinit var pulseGlyph: PulseGlyphView
     private lateinit var tvBpm: TextView
@@ -1018,7 +1094,27 @@ class MainActivity : AppCompatActivity() {
                         tvBatteryVal.setTextColor(
                             if (level > 20) Color.parseColor("#10B981") else Color.parseColor("#EF4444")
                         )
+                        updateBatteryActivityUI(level)
                     }
+                }
+                "com.pulsebridge.STATS" -> {
+                    val steps = intent.getIntExtra("steps", 0)
+                    if (steps > 0) {
+                        lastRecordedSteps = steps
+                        updateStepsActivityUI(steps)
+                    }
+                }
+                "com.pulsebridge.ACTIVITY" -> {
+                    val bpm = intent.getIntExtra("bpm", 0)
+                    val steps = intent.getIntExtra("steps", 0)
+                    val cal = intent.getIntExtra("calories", 0)
+                    val distKm = intent.getFloatExtra("distanceKm", 0f)
+                    val bat = intent.getIntExtra("battery", 0)
+                    if (steps > 0) lastRecordedSteps = steps
+                    if (cal > 0) lastRecordedCalories = cal
+                    if (distKm > 0f) lastRecordedDistanceKm = distKm
+                    if (bat > 0) currentBattery = bat
+                    updateFullActivityUI()
                 }
             }
         }
@@ -1157,6 +1253,79 @@ class MainActivity : AppCompatActivity() {
         root.addView(headerRow)
 
         // ==========================================
+        // TAB ROW: [ 💓 TELEMETRY ]  [ 🏃 ACTIVITY ]
+        // ==========================================
+        tabRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = makeGradientDrawable(
+                intArrayOf(Color.parseColor("#1A0D30"), Color.parseColor("#0F061E")),
+                radius = dp(12).toFloat(),
+                strokeColor = Color.parseColor("#381B5E"),
+                strokeWidth = dp(1)
+            )
+            setPadding(dp(3), dp(3), dp(3), dp(3))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(14) }
+        }
+
+        tabTelemetry = TextView(this).apply {
+            text = AppStrings.get("tab_telemetry", currentLang)
+            textSize = 12f
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(9), dp(12), dp(9))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener {
+                if (isActivityTabActive) {
+                    isActivityTabActive = false
+                    telemetryContainer.visibility = View.VISIBLE
+                    activityContainer.visibility = View.GONE
+                    updateTabStyles()
+                }
+            }
+        }
+
+        tabActivity = TextView(this).apply {
+            text = AppStrings.get("tab_activity", currentLang)
+            textSize = 12f
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(9), dp(12), dp(9))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener {
+                if (!isActivityTabActive) {
+                    isActivityTabActive = true
+                    telemetryContainer.visibility = View.GONE
+                    activityContainer.visibility = View.VISIBLE
+                    updateTabStyles()
+                    updateFullActivityUI()
+                }
+            }
+        }
+
+        tabRow.addView(tabTelemetry)
+        tabRow.addView(tabActivity)
+        root.addView(tabRow)
+
+        telemetryContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        root.addView(telemetryContainer)
+
+        activityContainer = createActivityTabViews().apply {
+            visibility = View.GONE
+        }
+        root.addView(activityContainer)
+
+        updateTabStyles()
+
+        // ==========================================
         // 2. HERO CARD (Electric Pulse Glyph & Unified Telemetry Bar)
         // ==========================================
         heroCard = FrameLayout(this).apply {
@@ -1245,7 +1414,7 @@ class MainActivity : AppCompatActivity() {
         heroCardContent.addView(tvBpmLabel)
         heroCardContent.addView(telemetryBar)
         heroCard.addView(heroCardContent)
-        root.addView(heroCard)
+        telemetryContainer.addView(heroCard)
 
         // ==========================================
         // 4. ACTION BUTTONS & CONTROLS
@@ -1265,7 +1434,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        root.addView(btnToggle)
+        telemetryContainer.addView(btnToggle)
 
         val actionRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1329,7 +1498,7 @@ class MainActivity : AppCompatActivity() {
         actionRow.addView(btnHistory)
         actionRow.addView(btnCopy)
         actionRow.addView(btnClear)
-        root.addView(actionRow)
+        telemetryContainer.addView(actionRow)
 
         
 
@@ -1470,7 +1639,7 @@ class MainActivity : AppCompatActivity() {
         }
         graphCard.addView(hrChartView)
         updateRangePillsUI()
-        root.addView(graphCard)
+        telemetryContainer.addView(graphCard)
 
 // ==========================================
         // 5. LIVE CONSOLE / LOGS CARD (Collapsible)
@@ -1500,7 +1669,7 @@ class MainActivity : AppCompatActivity() {
 
         consoleHeader.addView(tvConsoleTitle)
         consoleHeader.addView(tvLiveDot)
-        root.addView(consoleHeader)
+        telemetryContainer.addView(consoleHeader)
 
         consoleCard = FrameLayout(this).apply {
             background = makeDrawable(
@@ -1533,7 +1702,7 @@ class MainActivity : AppCompatActivity() {
 
         scrollView.addView(tvLogs)
         consoleCard.addView(scrollView)
-        root.addView(consoleCard)
+        telemetryContainer.addView(consoleCard)
 
         setContentView(mainScrollView)
 
@@ -1542,18 +1711,566 @@ class MainActivity : AppCompatActivity() {
             addAction("com.pulsebridge.STATUS")
             addAction("com.pulsebridge.BPM")
             addAction("com.pulsebridge.BATTERY")
+            addAction("com.pulsebridge.STATS")
+            addAction("com.pulsebridge.ACTIVITY")
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
         } else {
             registerReceiver(receiver, filter)
         }
+
+        // Restore state from PulseBleService companion if already running
+        if (PulseBleService.isRunning) {
+            isRunning = true
+            btnToggle.isRunningState = true
+            btnToggle.text = AppStrings.get("btn_stop", currentLang)
+            if (PulseBleService.lastBpm > 0) {
+                tvBpm.text = PulseBleService.lastBpm.toString()
+            }
+            if (PulseBleService.lastBattery > 0) {
+                currentBattery = PulseBleService.lastBattery
+                tvBatteryVal.text = "$currentBattery%"
+            }
+            lastRecordedSteps = PulseBleService.lastSteps
+            lastRecordedCalories = PulseBleService.lastCalories
+            lastRecordedDistanceKm = PulseBleService.lastDistanceKm
+            updateStatusBadge(PulseBleService.lastStatus)
+            updateFullActivityUI()
+        }
+        startUptimeTimer()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         stopPulseGlyphAnimation()
+        uptimeTimerJob?.cancel()
         unregisterReceiver(receiver)
+    }
+
+    private fun updateTabStyles() {
+        if (!isActivityTabActive) {
+            tabTelemetry.setTextColor(Color.WHITE)
+            tabTelemetry.background = makeGradientDrawable(
+                intArrayOf(Color.parseColor("#9333EA"), Color.parseColor("#7C3AED")),
+                radius = dp(10).toFloat(),
+                strokeColor = Color.parseColor("#C084FC"),
+                strokeWidth = dp(1)
+            )
+            tabActivity.setTextColor(Color.parseColor("#64748B"))
+            tabActivity.background = null
+        } else {
+            tabActivity.setTextColor(Color.WHITE)
+            tabActivity.background = makeGradientDrawable(
+                intArrayOf(Color.parseColor("#9333EA"), Color.parseColor("#7C3AED")),
+                radius = dp(10).toFloat(),
+                strokeColor = Color.parseColor("#C084FC"),
+                strokeWidth = dp(1)
+            )
+            tabTelemetry.setTextColor(Color.parseColor("#64748B"))
+            tabTelemetry.background = null
+        }
+    }
+
+    private fun createActivityTabViews(): LinearLayout {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        // ==========================================
+        // CARD 1: DAILY STEPS & MOVEMENT
+        // ==========================================
+        val cardSteps = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = makeGradientDrawable(
+                intArrayOf(Color.parseColor("#1B0E33"), Color.parseColor("#0E071A")),
+                radius = dp(16).toFloat(),
+                strokeColor = Color.parseColor("#381B5E"),
+                strokeWidth = dp(1)
+            )
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(14) }
+        }
+
+        val stepsHeaderRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(10) }
+        }
+
+        tvActStepsTitle = TextView(this).apply {
+            text = AppStrings.get("act_steps_title", currentLang)
+            textSize = 10.5f
+            letterSpacing = 0.15f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#C084FC"))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        tvActStepsGoal = TextView(this).apply {
+            text = AppStrings.get("act_steps_goal", currentLang)
+            textSize = 10f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#64748B"))
+        }
+
+        stepsHeaderRow.addView(tvActStepsTitle)
+        stepsHeaderRow.addView(tvActStepsGoal)
+
+        val stepsValRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(10) }
+        }
+
+        val ivStepsIcon = TextView(this).apply {
+            text = "👟"
+            textSize = 28f
+            setPadding(0, 0, dp(10), 0)
+        }
+
+        tvActStepsVal = TextView(this).apply {
+            text = "--"
+            textSize = 34f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+        }
+
+        tvActStepsLbl = TextView(this).apply {
+            text = " " + AppStrings.get("act_steps_lbl", currentLang)
+            textSize = 13f
+            setTextColor(Color.parseColor("#94A3B8"))
+            setPadding(dp(6), dp(10), 0, 0)
+        }
+
+        stepsValRow.addView(ivStepsIcon)
+        stepsValRow.addView(tvActStepsVal)
+        stepsValRow.addView(tvActStepsLbl)
+
+        val stepsBarContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = makeGradientDrawable(
+                intArrayOf(Color.parseColor("#25133E"), Color.parseColor("#1B0E33")),
+                radius = dp(5).toFloat()
+            )
+            weightSum = 100f
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(10)
+            ).apply { bottomMargin = dp(14) }
+        }
+
+        barStepsFill = View(this).apply {
+            background = makeGradientDrawable(
+                intArrayOf(Color.parseColor("#C084FC"), Color.parseColor("#9333EA")),
+                radius = dp(5).toFloat()
+            )
+            layoutParams = LinearLayout.LayoutParams(0, dp(10), 0f)
+        }
+
+        barStepsEmpty = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(10), 100f)
+        }
+
+        stepsBarContainer.addView(barStepsFill)
+        stepsBarContainer.addView(barStepsEmpty)
+
+        val miniMetricsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        val calCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = makeGradientDrawable(
+                intArrayOf(Color.parseColor("#21103D"), Color.parseColor("#120824")),
+                radius = dp(12).toFloat(),
+                strokeColor = Color.parseColor("#3B1D61"),
+                strokeWidth = dp(1)
+            )
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginEnd = dp(6)
+            }
+        }
+
+        tvActCalLbl = TextView(this).apply {
+            text = AppStrings.get("act_calories", currentLang)
+            textSize = 10.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#F59E0B"))
+        }
+
+        tvActCalVal = TextView(this).apply {
+            text = "--"
+            textSize = 20f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            setPadding(0, dp(4), 0, 0)
+        }
+
+        calCard.addView(tvActCalLbl)
+        calCard.addView(tvActCalVal)
+
+        val distCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = makeGradientDrawable(
+                intArrayOf(Color.parseColor("#21103D"), Color.parseColor("#120824")),
+                radius = dp(12).toFloat(),
+                strokeColor = Color.parseColor("#3B1D61"),
+                strokeWidth = dp(1)
+            )
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = dp(6)
+            }
+        }
+
+        tvActDistLbl = TextView(this).apply {
+            text = AppStrings.get("act_distance", currentLang)
+            textSize = 10.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#06B6D4"))
+        }
+
+        tvActDistVal = TextView(this).apply {
+            text = "--"
+            textSize = 20f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            setPadding(0, dp(4), 0, 0)
+        }
+
+        distCard.addView(tvActDistLbl)
+        distCard.addView(tvActDistVal)
+
+        miniMetricsRow.addView(calCard)
+        miniMetricsRow.addView(distCard)
+
+        cardSteps.addView(stepsHeaderRow)
+        cardSteps.addView(stepsValRow)
+        cardSteps.addView(stepsBarContainer)
+        cardSteps.addView(miniMetricsRow)
+        container.addView(cardSteps)
+
+        // ==========================================
+        // CARD 2: BAND HARDWARE & BATTERY
+        // ==========================================
+        val cardDevice = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = makeGradientDrawable(
+                intArrayOf(Color.parseColor("#1B0E33"), Color.parseColor("#0E071A")),
+                radius = dp(16).toFloat(),
+                strokeColor = Color.parseColor("#381B5E"),
+                strokeWidth = dp(1)
+            )
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(14) }
+        }
+
+        val devHeaderRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(8) }
+        }
+
+        tvActDeviceTitle = TextView(this).apply {
+            text = AppStrings.get("act_device_title", currentLang)
+            textSize = 10.5f
+            letterSpacing = 0.15f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#C084FC"))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        tvActStatusBadge = TextView(this).apply {
+            text = tvStatusBadge.text
+            textSize = 10f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(tvStatusBadge.currentTextColor)
+            background = tvStatusBadge.background
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+        }
+
+        devHeaderRow.addView(tvActDeviceTitle)
+        devHeaderRow.addView(tvActStatusBadge)
+
+        tvActDeviceName = TextView(this).apply {
+            text = AppStrings.get("act_device_name", currentLang)
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+        }
+
+        tvActDeviceSub = TextView(this).apply {
+            text = AppStrings.get("act_device_sub", currentLang)
+            textSize = 11f
+            setTextColor(Color.parseColor("#64748B"))
+            setPadding(0, dp(2), 0, dp(12))
+        }
+
+        val batHeaderRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(6) }
+        }
+
+        tvActBatTitle = TextView(this).apply {
+            text = AppStrings.get("act_battery_title", currentLang)
+            textSize = 11f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#94A3B8"))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        tvActBatVal = TextView(this).apply {
+            text = if (currentBattery > 0) "$currentBattery%" else "--%"
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#10B981"))
+        }
+
+        batHeaderRow.addView(tvActBatTitle)
+        batHeaderRow.addView(tvActBatVal)
+
+        val batBarContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = makeGradientDrawable(
+                intArrayOf(Color.parseColor("#25133E"), Color.parseColor("#1B0E33")),
+                radius = dp(5).toFloat()
+            )
+            weightSum = 100f
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(10)
+            )
+        }
+
+        barBatteryFill = View(this).apply {
+            background = makeGradientDrawable(
+                intArrayOf(Color.parseColor("#34D399"), Color.parseColor("#10B981")),
+                radius = dp(5).toFloat()
+            )
+            val pct = currentBattery.coerceIn(0, 100).toFloat()
+            layoutParams = LinearLayout.LayoutParams(0, dp(10), pct)
+        }
+
+        barBatteryEmpty = View(this).apply {
+            val pct = currentBattery.coerceIn(0, 100).toFloat()
+            layoutParams = LinearLayout.LayoutParams(0, dp(10), 100f - pct)
+        }
+
+        batBarContainer.addView(barBatteryFill)
+        batBarContainer.addView(barBatteryEmpty)
+
+        cardDevice.addView(devHeaderRow)
+        cardDevice.addView(tvActDeviceName)
+        cardDevice.addView(tvActDeviceSub)
+        cardDevice.addView(batHeaderRow)
+        cardDevice.addView(batBarContainer)
+        container.addView(cardDevice)
+
+        // ==========================================
+        // CARD 3: CURRENT SESSION UPTIME & HR SUMMARY
+        // ==========================================
+        val cardSession = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = makeGradientDrawable(
+                intArrayOf(Color.parseColor("#1B0E33"), Color.parseColor("#0E071A")),
+                radius = dp(16).toFloat(),
+                strokeColor = Color.parseColor("#381B5E"),
+                strokeWidth = dp(1)
+            )
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(14) }
+        }
+
+        tvActSessionTitle = TextView(this).apply {
+            text = AppStrings.get("act_session_title", currentLang)
+            textSize = 10.5f
+            letterSpacing = 0.15f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#C084FC"))
+            setPadding(0, 0, 0, dp(6))
+        }
+
+        tvActUptimeVal = TextView(this).apply {
+            text = "00:00:00"
+            textSize = 28f
+            setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
+            setTextColor(Color.parseColor("#38BDF8"))
+        }
+
+        tvActUptimeSub = TextView(this).apply {
+            text = AppStrings.get("act_session_sub", currentLang)
+            textSize = 10.5f
+            setTextColor(Color.parseColor("#64748B"))
+            setPadding(0, dp(2), 0, dp(10))
+        }
+
+        tvActSummaryTitle = TextView(this).apply {
+            text = AppStrings.get("act_hr_summary", currentLang)
+            textSize = 10.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#94A3B8"))
+            setPadding(0, 0, 0, dp(4))
+        }
+
+        tvActSummaryVal = TextView(this).apply {
+            text = "MIN: --  |  AVG: --  |  MAX: --"
+            textSize = 13f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+        }
+
+        cardSession.addView(tvActSessionTitle)
+        cardSession.addView(tvActUptimeVal)
+        cardSession.addView(tvActUptimeSub)
+        cardSession.addView(tvActSummaryTitle)
+        cardSession.addView(tvActSummaryVal)
+        container.addView(cardSession)
+
+        // ==========================================
+        // CARD 4: DESKTOP WIDGETS GUIDE
+        // ==========================================
+        val cardWidgets = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = makeGradientDrawable(
+                intArrayOf(Color.parseColor("#150A26"), Color.parseColor("#090312")),
+                radius = dp(16).toFloat(),
+                strokeColor = Color.parseColor("#2E164A"),
+                strokeWidth = dp(1)
+            )
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(14) }
+        }
+
+        tvActWidgetTitle = TextView(this).apply {
+            text = AppStrings.get("act_widgets_title", currentLang)
+            textSize = 11.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#F472B6"))
+            setPadding(0, 0, 0, dp(6))
+        }
+
+        tvActWidgetDesc = TextView(this).apply {
+            text = AppStrings.get("act_widgets_desc", currentLang)
+            textSize = 11.5f
+            setLineSpacing(dp(3).toFloat(), 1f)
+            setTextColor(Color.parseColor("#94A3B8"))
+        }
+
+        cardWidgets.addView(tvActWidgetTitle)
+        cardWidgets.addView(tvActWidgetDesc)
+        container.addView(cardWidgets)
+
+        return container
+    }
+
+    private fun updateFullActivityUI() {
+        updateStepsActivityUI(lastRecordedSteps)
+        updateCaloriesActivityUI(lastRecordedCalories)
+        updateDistanceActivityUI(lastRecordedDistanceKm)
+        updateBatteryActivityUI(currentBattery)
+        updateSessionActivityUI()
+    }
+
+    private fun updateStepsActivityUI(steps: Int) {
+        if (::tvActStepsVal.isInitialized) {
+            tvActStepsVal.text = if (steps > 0) "%,d".format(steps) else "--"
+            val pct = (steps.toFloat() / 10000f * 100f).coerceIn(0f, 100f)
+            barStepsFill.layoutParams = LinearLayout.LayoutParams(0, dp(10), pct)
+            barStepsEmpty.layoutParams = LinearLayout.LayoutParams(0, dp(10), 100f - pct)
+        }
+    }
+
+    private fun updateCaloriesActivityUI(cal: Int) {
+        if (::tvActCalVal.isInitialized) {
+            tvActCalVal.text = if (cal > 0) "$cal ккал" else "--"
+        }
+    }
+
+    private fun updateDistanceActivityUI(distKm: Float) {
+        if (::tvActDistVal.isInitialized) {
+            tvActDistVal.text = if (distKm > 0f) "%.2f км".format(distKm) else "--"
+        }
+    }
+
+    private fun updateBatteryActivityUI(bat: Int) {
+        if (::tvActBatVal.isInitialized) {
+            tvActBatVal.text = if (bat > 0) "$bat%" else "--%"
+            tvActBatVal.setTextColor(if (bat <= 20) Color.parseColor("#EF4444") else Color.parseColor("#10B981"))
+            val pct = bat.coerceIn(0, 100).toFloat()
+            barBatteryFill.layoutParams = LinearLayout.LayoutParams(0, dp(10), pct)
+            barBatteryEmpty.layoutParams = LinearLayout.LayoutParams(0, dp(10), 100f - pct)
+        }
+    }
+
+    private fun updateSessionActivityUI() {
+        if (::tvActSummaryVal.isInitialized) {
+            val minStr = if (minBpm > 0) minBpm.toString() else "--"
+            val avgStr = if (bpmCount > 0) (bpmSum / bpmCount).toString() else "--"
+            val maxStr = if (maxBpm > 0) maxBpm.toString() else "--"
+            tvActSummaryVal.text = "MIN: $minStr  |  AVG: $avgStr  |  MAX: $maxStr"
+        }
+        if (::tvActStatusBadge.isInitialized && ::tvStatusBadge.isInitialized) {
+            tvActStatusBadge.text = tvStatusBadge.text
+            tvActStatusBadge.setTextColor(tvStatusBadge.currentTextColor)
+            tvActStatusBadge.background = tvStatusBadge.background
+        }
+    }
+
+    private fun startUptimeTimer() {
+        uptimeTimerJob?.cancel()
+        uptimeTimerJob = CoroutineScope(Dispatchers.Main).launch {
+            while (isActive) {
+                if (isRunning && sessionStartTimeMs > 0L) {
+                    val elapsedSec = (System.currentTimeMillis() - sessionStartTimeMs) / 1000
+                    val hrs = elapsedSec / 3600
+                    val mins = (elapsedSec % 3600) / 60
+                    val secs = elapsedSec % 60
+                    if (::tvActUptimeVal.isInitialized) {
+                        tvActUptimeVal.text = "%02d:%02d:%02d".format(hrs, mins, secs)
+                    }
+                } else {
+                    if (::tvActUptimeVal.isInitialized) {
+                        tvActUptimeVal.text = "00:00:00"
+                    }
+                }
+                delay(1000)
+            }
+        }
     }
 
     private fun toggleLanguage() {
@@ -1576,6 +2293,24 @@ class MainActivity : AppCompatActivity() {
         tvMaxLbl.text = AppStrings.get("metric_max", currentLang)
         tvBatteryLbl.text = AppStrings.get("metric_bat", currentLang)
 
+        tabTelemetry.text = AppStrings.get("tab_telemetry", currentLang)
+        tabActivity.text = AppStrings.get("tab_activity", currentLang)
+        if (::tvActStepsTitle.isInitialized) {
+            tvActStepsTitle.text = AppStrings.get("act_steps_title", currentLang)
+            tvActStepsGoal.text = AppStrings.get("act_steps_goal", currentLang)
+            tvActStepsLbl.text = " " + AppStrings.get("act_steps_lbl", currentLang)
+            tvActCalLbl.text = AppStrings.get("act_calories", currentLang)
+            tvActDistLbl.text = AppStrings.get("act_distance", currentLang)
+            tvActDeviceTitle.text = AppStrings.get("act_device_title", currentLang)
+            tvActDeviceName.text = AppStrings.get("act_device_name", currentLang)
+            tvActDeviceSub.text = AppStrings.get("act_device_sub", currentLang)
+            tvActBatTitle.text = AppStrings.get("act_battery_title", currentLang)
+            tvActSessionTitle.text = AppStrings.get("act_session_title", currentLang)
+            tvActUptimeSub.text = AppStrings.get("act_session_sub", currentLang)
+            tvActSummaryTitle.text = AppStrings.get("act_hr_summary", currentLang)
+            tvActWidgetTitle.text = AppStrings.get("act_widgets_title", currentLang)
+            tvActWidgetDesc.text = AppStrings.get("act_widgets_desc", currentLang)
+        }
         tvGraphTitle.text = "📈 " + AppStrings.get("graph_title", currentLang)
         btnResetZoom.text = AppStrings.get("zoom_reset", currentLang)
 

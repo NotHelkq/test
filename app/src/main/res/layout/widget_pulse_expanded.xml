@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widgetExpandedRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:padding="12dp">
+
+    <!-- Left Section: Heart + BPM + Zone -->
+    <LinearLayout
+        android:id="@+id/layoutLeft"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1.1"
+        android:orientation="vertical"
+        android:gravity="center">
+
+        <TextView
+            android:id="@+id/tvExpandedStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="● OFF"
+            android:textColor="#64748B"
+            android:textSize="9.5sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="2dp" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <ImageView
+                android:id="@+id/ivExpandedHeart"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:layout_marginEnd="6dp"
+                android:contentDescription="Heart" />
+
+            <TextView
+                android:id="@+id/tvExpandedBpm"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="--"
+                android:textColor="#FFFFFF"
+                android:textSize="36sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvExpandedZone"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="BEATS PER MINUTE"
+            android:textColor="#94A3B8"
+            android:textSize="8.5sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.08" />
+    </LinearLayout>
+
+    <!-- Divider 1 -->
+    <View
+        android:layout_width="1dp"
+        android:layout_height="match_parent"
+        android:layout_marginVertical="6dp"
+        android:layout_marginHorizontal="6dp"
+        android:background="#2E164A" />
+
+    <!-- Middle Section: Stats & Activity -->
+    <LinearLayout
+        android:id="@+id/layoutMiddle"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1.3"
+        android:orientation="vertical"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="4dp">
+
+        <TextView
+            android:id="@+id/tvExpandedStats"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="MIN: --  AVG: --  MAX: --"
+            android:textColor="#CBD5E1"
+            android:textSize="9.5sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="6dp" />
+
+        <TextView
+            android:id="@+id/tvExpandedActivity"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="👟 -- шагов  •  🔥 -- ккал"
+            android:textColor="#A855F7"
+            android:textSize="9.5sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="6dp" />
+
+        <TextView
+            android:id="@+id/tvExpandedDevice"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="🔋 --%  •  Band 9 Active"
+            android:textColor="#10B981"
+            android:textSize="9.5sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- Divider 2 -->
+    <View
+        android:layout_width="1dp"
+        android:layout_height="match_parent"
+        android:layout_marginVertical="6dp"
+        android:layout_marginHorizontal="6dp"
+        android:background="#2E164A" />
+
+    <!-- Right Section: Quick Action Button -->
+    <LinearLayout
+        android:id="@+id/layoutRight"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="0.9"
+        android:orientation="vertical"
+        android:gravity="center">
+
+        <Button
+            android:id="@+id/btnWidgetToggle"
+            android:layout_width="match_parent"
+            android:layout_height="38dp"
+            android:background="@drawable/widget_btn_bg"
+            android:text="▶ СТАРТ"
+            android:textColor="#FFFFFF"
+            android:textSize="10.5sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="6dp" />
+
+        <TextView
+            android:id="@+id/btnWidgetOpen"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="📱 ОТКРЫТЬ"
+            android:textColor="#94A3B8"
+            android:textSize="9.5sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+</LinearLayout>

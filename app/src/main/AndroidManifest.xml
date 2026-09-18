@@ -36,5 +36,33 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
+
+        <!-- Compact Widget (2x1 / 2x2) -->
+        <receiver
+            android:name=".PulseCompactWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.pulsebridge.ACTION_UPDATE_WIDGETS" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_pulse_compact_info" />
+        </receiver>
+
+        <!-- Expanded Widget (4x2) -->
+        <receiver
+            android:name=".PulseExpandedWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.pulsebridge.ACTION_UPDATE_WIDGETS" />
+                <action android:name="com.pulsebridge.ACTION_WIDGET_TOGGLE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_pulse_expanded_info" />
+        </receiver>
+
     </application>
 </manifest>

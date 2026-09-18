@@ -51,6 +51,18 @@ class PulseBleService : Service() {
         val CHAR_BATTERY_LEVEL: UUID = UUID.fromString("00002a19-0000-1000-8000-00805f9b34fb")
 
         private val PREAMBLE = byteArrayOf(0xA5.toByte(), 0xA5.toByte())
+
+        // Public static state for Widgets and Activities
+        @Volatile var isRunning: Boolean = false
+        @Volatile var lastBpm: Int = 0
+        @Volatile var lastBattery: Int = 0
+        @Volatile var lastSteps: Int = 0
+        @Volatile var lastCalories: Int = 0
+        @Volatile var lastDistanceKm: Float = 0f
+        @Volatile var lastStatus: String = "● OFF"
+        @Volatile var minBpm: Int = 0
+        @Volatile var avgBpm: Int = 0
+        @Volatile var maxBpm: Int = 0
     }
 
     private var bluetoothGatt: BluetoothGatt? = null
@@ -81,7 +93,13 @@ class PulseBleService : Service() {
 
     private var lastRecordedBpm = 0
     private var lastRecordedSteps = 0
+    private var lastRecordedCalories = 0
+    private var lastRecordedDistanceKm = 0f
     private var lastBatteryLevel = -1
+    private var minBpm = 0
+    private var maxBpm = 0
+    private var bpmSum = 0L
+    private var bpmCount = 0
     private var sessionStartTimeMs = 0L
 
     private var rawSensorBatchesSinceAck = 0
@@ -96,6 +114,21 @@ class PulseBleService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+
+        PulseBleService.isRunning = true
+        PulseWidgetHelper.updateAllWidgets(
+            this,
+            bpm = lastRecordedBpm,
+            status = "● ПОДКЛЮЧЕНИЕ...",
+            battery = if (lastBatteryLevel >= 0) lastBatteryLevel else 0,
+            steps = lastRecordedSteps,
+            calories = lastRecordedCalories,
+            distanceKm = lastRecordedDistanceKm,
+            running = true,
+            min = minBpm,
+            avg = if (bpmCount > 0) (bpmSum / bpmCount).toInt() else 0,
+            max = maxBpm
+        )
 
         if (sessionStartTimeMs == 0L) {
             sessionStartTimeMs = System.currentTimeMillis()
@@ -114,6 +147,22 @@ class PulseBleService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        PulseBleService.isRunning = false
+        PulseBleService.lastBpm = 0
+        PulseBleService.lastStatus = "● OFF"
+        PulseWidgetHelper.updateAllWidgets(
+            this,
+            bpm = 0,
+            status = "● OFF",
+            battery = if (lastBatteryLevel >= 0) lastBatteryLevel else 0,
+            steps = lastRecordedSteps,
+            calories = lastRecordedCalories,
+            distanceKm = lastRecordedDistanceKm,
+            running = false,
+            min = minBpm,
+            avg = if (bpmCount > 0) (bpmSum / bpmCount).toInt() else 0,
+            max = maxBpm
+        )
         sessionStartTimeMs = 0L
         pingJob?.cancel()
         txTimeoutJob?.cancel()
@@ -129,7 +178,12 @@ class PulseBleService : Service() {
     }
 
     private fun sendState(status: String) {
+        PulseBleService.lastStatus = status
         sendBroadcast(Intent("com.pulsebridge.STATUS").apply { putExtra("status", status) })
+        PulseWidgetHelper.updateAllWidgets(
+            this,
+            status = if (isStreaming) "● LIVE" else status
+        )
     }
 
     private fun sendBpmUpdate(bpm: Int) {
@@ -140,10 +194,28 @@ class PulseBleService : Service() {
         sendBroadcast(Intent("com.pulsebridge.STATS").apply { putExtra("steps", steps) })
     }
 
+    private fun sendActivityUpdate(bpm: Int, steps: Int, calories: Int, distanceKm: Float, battery: Int) {
+        val intent = Intent("com.pulsebridge.ACTIVITY").apply {
+            putExtra("bpm", bpm)
+            putExtra("steps", steps)
+            putExtra("calories", calories)
+            putExtra("distanceKm", distanceKm)
+            putExtra("battery", battery)
+            putExtra("isRunning", true)
+            putExtra("minBpm", minBpm)
+            putExtra("avgBpm", if (bpmCount > 0) (bpmSum / bpmCount).toInt() else 0)
+            putExtra("maxBpm", maxBpm)
+        }
+        sendBroadcast(intent)
+    }
+
     private fun sendBatteryUpdate(level: Int) {
         lastBatteryLevel = level
+        PulseBleService.lastBattery = level
         sendBroadcast(Intent("com.pulsebridge.BATTERY").apply { putExtra("level", level) })
+        sendActivityUpdate(lastRecordedBpm, lastRecordedSteps, lastRecordedCalories, lastRecordedDistanceKm, level)
         updateNotification(lastRecordedBpm)
+        PulseWidgetHelper.updateAllWidgets(this, battery = level)
     }
 
     private fun connectDirect() {
@@ -666,11 +738,16 @@ class PulseBleService : Service() {
                     val sportFields = ProtoReader.parseFields(sportBytes)
                     val hr = sportFields[1]?.asLong()?.toInt() ?: 0
                     val steps = sportFields[2]?.asLong()?.toInt() ?: 0
+                    val calories = sportFields[3]?.asLong()?.toInt() ?: 0
+                    val distMeters = sportFields[4]?.asLong()?.toInt() ?: 0
 
                     if (hr in 35..230) {
-                        onHeartRateReceived(hr, steps, "SportData")
+                        onHeartRateReceived(hr, steps, calories, distMeters, "SportData")
                     } else if (hr == 0) {
-                        sendLog("<< [SportData] Сенсор активен, калибровка пульса... (шаги: $steps)")
+                        if (steps > 0 || calories > 0 || distMeters > 0) {
+                            onHeartRateReceived(lastRecordedBpm, steps, calories, distMeters, "SportData")
+                        }
+                        sendLog("<< [SportData] Сенсор активен, калибровка пульса... (шаги: $steps, ккал: $calories)")
                     }
                     return
                 }
@@ -680,13 +757,18 @@ class PulseBleService : Service() {
                 if (rtsBytes != null) {
                     lastPulsePacketTime = System.currentTimeMillis()
                     val rtsFields = ProtoReader.parseFields(rtsBytes)
-                    val hr = rtsFields[4]?.asLong()?.toInt() ?: 0
                     val steps = rtsFields[1]?.asLong()?.toInt() ?: 0
+                    val calories = rtsFields[2]?.asLong()?.toInt() ?: 0
+                    val distMeters = rtsFields[3]?.asLong()?.toInt() ?: 0
+                    val hr = rtsFields[4]?.asLong()?.toInt() ?: 0
 
                     if (hr in 35..230) {
-                        onHeartRateReceived(hr, steps, "Protobuf RTS")
+                        onHeartRateReceived(hr, steps, calories, distMeters, "Protobuf RTS")
                     } else if (hr == 0) {
-                        sendLog("<< [Protobuf RTS] Сенсор активен, калибровка пульса... (шаги: $steps)")
+                        if (steps > 0 || calories > 0 || distMeters > 0) {
+                            onHeartRateReceived(lastRecordedBpm, steps, calories, distMeters, "Protobuf RTS")
+                        }
+                        sendLog("<< [Protobuf RTS] Сенсор активен, калибровка пульса... (шаги: $steps, ккал: $calories)")
                     }
                     return
                 }
@@ -747,19 +829,67 @@ class PulseBleService : Service() {
         }
     }
 
-    private fun onHeartRateReceived(bpm: Int, steps: Int?, source: String) {
-        lastRecordedBpm = bpm
+    private fun onHeartRateReceived(bpm: Int, steps: Int?, calories: Int? = null, distanceMeters: Int? = null, source: String) {
+        if (bpm in 35..230) {
+            lastRecordedBpm = bpm
+            if (minBpm == 0 || bpm < minBpm) minBpm = bpm
+            if (bpm > maxBpm) maxBpm = bpm
+            bpmCount++
+            bpmSum += bpm
+        }
         lastPulsePacketTime = System.currentTimeMillis()
         if (steps != null && steps > 0) {
             lastRecordedSteps = steps
-            sendStatsUpdate(steps)
+        }
+        if (calories != null && calories > 0) {
+            lastRecordedCalories = calories
+        }
+        if (distanceMeters != null && distanceMeters > 0) {
+            lastRecordedDistanceKm = distanceMeters / 1000f
         }
 
-        sendLog("❤️ [$source] Пульс: $bpm BPM" + if (lastRecordedSteps > 0) " | Шаги: $lastRecordedSteps" else "")
-        sendState("Трансляция ($bpm BPM)")
-        sendBpmUpdate(bpm)
-        updateNotification(bpm)
-        sendPulseToServer(bpm)
+        val avgBpm = if (bpmCount > 0) (bpmSum / bpmCount).toInt() else 0
+
+        // Update companion static state
+        PulseBleService.isRunning = true
+        PulseBleService.lastBpm = lastRecordedBpm
+        PulseBleService.lastBattery = if (lastBatteryLevel >= 0) lastBatteryLevel else 0
+        PulseBleService.lastSteps = lastRecordedSteps
+        PulseBleService.lastCalories = lastRecordedCalories
+        PulseBleService.lastDistanceKm = lastRecordedDistanceKm
+        PulseBleService.lastStatus = "Трансляция ($lastRecordedBpm BPM)"
+        PulseBleService.minBpm = minBpm
+        PulseBleService.avgBpm = avgBpm
+        PulseBleService.maxBpm = maxBpm
+
+        var logMsg = "❤️ [$source] Пульс: $lastRecordedBpm BPM"
+        if (lastRecordedSteps > 0) logMsg += " | Шаги: $lastRecordedSteps"
+        if (lastRecordedCalories > 0) logMsg += " | $lastRecordedCalories ккал"
+        sendLog(logMsg)
+
+        sendState("Трансляция ($lastRecordedBpm BPM)")
+        sendBpmUpdate(lastRecordedBpm)
+        sendStatsUpdate(lastRecordedSteps)
+        sendActivityUpdate(lastRecordedBpm, lastRecordedSteps, lastRecordedCalories, lastRecordedDistanceKm, lastBatteryLevel)
+        updateNotification(lastRecordedBpm)
+        if (bpm in 35..230) {
+            sendPulseToServer(bpm)
+        }
+
+        // Real-time Home Screen Widgets Update
+        PulseWidgetHelper.updateAllWidgets(
+            this,
+            bpm = lastRecordedBpm,
+            status = "● LIVE",
+            battery = if (lastBatteryLevel >= 0) lastBatteryLevel else 0,
+            steps = lastRecordedSteps,
+            calories = lastRecordedCalories,
+            distanceKm = lastRecordedDistanceKm,
+            running = true,
+            min = minBpm,
+            avg = avgBpm,
+            max = maxBpm
+        )
     }
 
     // =========================================================================
@@ -993,7 +1123,7 @@ class PulseBleService : Service() {
         )
 
         val title = when {
-            bpm >= 160 -> "🔥 $bpm BPM • CLUTCH MODE"
+            bpm >= 150 -> "🔥 $bpm BPM • CLUTCH MODE"
             bpm > 0 -> "⚡ $bpm BPM • PulseBridge"
             else -> "⚡ PulseBridge • Подключение..."
         }
@@ -1004,7 +1134,7 @@ class PulseBleService : Service() {
         val bigText = StringBuilder()
         if (bpm > 0) {
             bigText.append("💓 Текущий пульс: $bpm BPM")
-            if (bpm >= 160) bigText.append(" (КЛАТЧ РЕЖИМ 🔥)")
+            if (bpm >= 150) bigText.append(" (КЛАТЧ РЕЖИМ 🔥)")
             bigText.append("\n")
         } else {
             bigText.append("💓 Ожидание сигнала пульса...\n")

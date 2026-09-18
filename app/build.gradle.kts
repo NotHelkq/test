@@ -11,14 +11,23 @@ android {
         applicationId = "com.pulsebridge"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
+    }
+
+    signingConfigs {
+        create("release") {
+            storeFile = rootProject.file("pulsebridge-release.jks")
+            storePassword = "PulseBridgeSecretPass2026!"
+            keyAlias = "pulsebridge"
+            keyPassword = "PulseBridgeSecretPass2026!"
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {
