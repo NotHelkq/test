@@ -8,6 +8,9 @@ on:
       - "app/**"
       - "buildSrc/**"
       - "library/**"
+      - "gradle/**"
+      - "*.gradle.kts"
+      - "gradle.properties"
       - ".github/workflows/debug.yml"
   workflow_dispatch:
 jobs:
