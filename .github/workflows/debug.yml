@@ -48,6 +48,8 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
+          chmod +x run gradlew
+          find bin -type f -exec chmod +x {} + 2>/dev/null || true
           go clean -modcache || true
           cd library/core/olcrtc_local && go mod download && go mod tidy && cd -
           cd library/core && go mod download && go mod tidy && cd -
