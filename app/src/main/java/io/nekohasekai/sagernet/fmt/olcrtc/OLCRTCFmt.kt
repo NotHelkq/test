@@ -1,0 +1,121 @@
+package io.nekohasekai.sagernet.fmt.olcrtc
+
+import io.nekohasekai.sagernet.ktx.queryParameter
+import libsagernetcore.Libsagernetcore
+import org.json.JSONObject
+
+private val VALID_PROVIDERS = setOf(
+    OLCRTCBean.PROVIDER_TELEMOST,
+    OLCRTCBean.PROVIDER_JITSI,
+    OLCRTCBean.PROVIDER_WB_STREAM,
+    OLCRTCBean.PROVIDER_JITSI,
+    "wb_stream",
+)
+
+private val VALID_TRANSPORTS = setOf(
+    OLCRTCBean.TRANSPORT_DATACHANNEL,
+    OLCRTCBean.TRANSPORT_VP8CHANNEL,
+    OLCRTCBean.TRANSPORT_SEICHANNEL,
+    OLCRTCBean.TRANSPORT_VIDEOCHANNEL,
+)
+
+private val HEX_REGEX = Regex("^[0-9a-fA-F]{64}$")
+
+private fun normalizeCarrier(p: String): String = when (p) {
+    "wb_stream" -> OLCRTCBean.PROVIDER_WB_STREAM
+    else -> p
+}
+
+fun parseOLCRTC(url: String): OLCRTCBean {
+    val link = Libsagernetcore.parseURL(url)
+    return OLCRTCBean().apply {
+        provider = normalizeCarrier(link.username)
+        roomId = link.path.trimStart('/')
+        roomPassword = link.queryParameter("room_password") ?: link.queryParameter("rp") ?: ""
+        keyHex = link.queryParameter("key") ?: link.queryParameter("k") ?: ""
+        dnsServer = link.queryParameter("dns") ?: link.queryParameter("d") ?: "77.88.8.8:53"
+        transport = link.queryParameter("transport") ?: link.queryParameter("t") ?: OLCRTCBean.TRANSPORT_DATACHANNEL
+        vp8Fps = (link.queryParameter("vp8_fps") ?: link.queryParameter("f"))?.toIntOrNull()?.takeIf { it > 0 } ?: 60
+        vp8BatchSize = (link.queryParameter("vp8_batch") ?: link.queryParameter("b"))?.toIntOrNull()?.takeIf { it > 0 } ?: 8
+        keepaliveIntervalSec = (link.queryParameter("keepalive") ?: link.queryParameter("ka"))?.toIntOrNull() ?: 15
+        // Server-issued client identifier; optional for backward compatibility
+        // with URIs exported before the server-side S8 work landed.
+        clientId = link.queryParameter("client_id") ?: link.queryParameter("c") ?: ""
+        authToken = link.queryParameter("auth_token") ?: link.queryParameter("auth.token") ?: link.queryParameter("a") ?: ""
+        name = link.fragment ?: ""
+
+        validate()
+    }
+}
+
+fun OLCRTCBean.toUri(): String {
+    val builder = Libsagernetcore.newURL("olcrtc").apply {
+        setHostPort("room", 1)
+        username = provider
+        path = "/$roomId"
+        addQueryParameter("key", keyHex)
+        // Room password is jitsi-only; never leak it for other carriers.
+        if (provider == OLCRTCBean.PROVIDER_JITSI &&
+            !roomPassword.isNullOrEmpty()
+        ) {
+            addQueryParameter("room_password", roomPassword)
+        }
+        // Server-issued client_id; emit only when present so legacy profiles
+        // re-shared without it stay backward compatible.
+        if (!clientId.isNullOrEmpty()) {
+            addQueryParameter("client_id", clientId)
+        }
+        if (provider == OLCRTCBean.PROVIDER_WB_STREAM && !authToken.isNullOrEmpty()) {
+            addQueryParameter("auth_token", authToken)
+        }
+        if (transport.isNotEmpty() && transport != OLCRTCBean.TRANSPORT_DATACHANNEL) {
+            addQueryParameter("transport", transport)
+            if (transport == OLCRTCBean.TRANSPORT_VP8CHANNEL) {
+                if (vp8Fps > 0 && vp8Fps != 60) {
+                    addQueryParameter("vp8_fps", vp8Fps.toString())
+                }
+                if (vp8BatchSize > 0 && vp8BatchSize != 8) {
+                    addQueryParameter("vp8_batch", vp8BatchSize.toString())
+                }
+            }
+        }
+        if (dnsServer.isNotEmpty() && dnsServer != "77.88.8.8:53") {
+            addQueryParameter("dns", dnsServer)
+        }
+        if (keepaliveIntervalSec > 0 && keepaliveIntervalSec != 15) {
+            addQueryParameter("keepalive", keepaliveIntervalSec.toString())
+        }
+        if (name.isNotEmpty()) {
+            fragment = name
+        }
+    }
+    return builder.string
+}
+
+fun parseOLCRTCJson(text: String): OLCRTCBean {
+    val json = JSONObject(text)
+    check(json.optString("type") == "olcrtc") { "Not an olcRTC config" }
+    return OLCRTCBean().apply {
+        name = json.optString("name", "")
+        provider = normalizeCarrier(json.optString("provider", ""))
+        transport = json.optString("transport", OLCRTCBean.TRANSPORT_DATACHANNEL)
+        roomId = json.optString("room_id", "")
+        roomPassword = json.optString("room_password", "")
+        clientId = json.optString("client_id", "")
+        authToken = json.optString("auth_token", "")
+        keyHex = json.optString("key_hex", "")
+        dnsServer = json.optString("dns_server", "77.88.8.8:53")
+        vp8Fps = json.optInt("vp8_fps", 60).takeIf { it > 0 } ?: 60
+        vp8BatchSize = json.optInt("vp8_batch", 8).takeIf { it > 0 } ?: 8
+        keepaliveIntervalSec = json.optInt("keepalive_interval_sec", 15)
+
+        validate()
+    }
+}
+
+private fun OLCRTCBean.validate() {
+    check(provider in VALID_PROVIDERS) { "Unknown carrier: $provider" }
+    check(transport in VALID_TRANSPORTS) { "Unknown transport: $transport" }
+    check(roomId.isNotEmpty()) { "room_id is required" }
+    check(HEX_REGEX.matches(keyHex)) { "key_hex must be 64 hex characters" }
+}

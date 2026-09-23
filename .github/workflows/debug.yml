@@ -1,0 +1,79 @@
+name: Debug Build
+on:
+  push:
+    branches:
+      - dev*
+      - main
+    paths:
+      - "app/**"
+      - "buildSrc/**"
+      - "library/**"
+      - ".github/workflows/debug.yml"
+  workflow_dispatch:
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 1.25.9
+          cache: false  # same reason as release.yml
+      - name: Setup Go Mobile
+        # https://github.com/golang/mobile/blob/c31d5b91ecc32c0d598b8fe8457d244ca0b4e815/cmd/gomobile/init.go#L83
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260410095206-2cfb76559b7b
+          go install golang.org/x/mobile/cmd/gobind@v0.0.0-20260410095206-2cfb76559b7b
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: 21
+          cache: 'gradle'
+      - name: Setup Android SDK
+      # gomobile can't parse newer version codes like android-36.1 or android-37.0.
+      # Always install android-36 for gomobile.
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-36'
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r29
+      - name: Native Build
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          go clean -modcache || true
+          cd library/core/olcrtc_local && go mod download && go mod tidy && cd -
+          cd library/core && go mod download && go mod tidy && cd -
+          echo "=== Resolved j module ==="
+          cd library/core && go list -m -json github.com/zarazaex69/j || true
+          cd -
+          ./run lib core debug
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          path: app/libs/libsagernetcore.aar
+          name: "LibSagerNetCore"
+      - name: Gradle Cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.gradle
+          key: gradle-debug-${{ hashFiles('**/*.gradle.kts') }}
+      - name: Gradle Build
+        run: |
+          echo "sdk.dir=${ANDROID_HOME}" > local.properties
+          ./gradlew :app:downloadAssets
+          ./gradlew :app:assembleOssDebug
+          APK="app/build/outputs/apk/oss/debug"
+          echo "APK=$APK" >> $GITHUB_ENV
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: APKs
+          path: ${{ env.APK }}
