@@ -61,6 +61,7 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           chmod +x run gradlew
+          find . -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
           find bin -type f -exec chmod +x {} + 2>/dev/null || true
           # Wipe any module cache the runner image came with — the
           # replace directives point at Oleglog/j pseudo-versions which
